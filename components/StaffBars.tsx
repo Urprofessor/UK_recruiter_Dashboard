@@ -18,10 +18,11 @@ interface Props {
 }
 
 export function StaffBars({ mdFullFlow, mdInitialOnly, np }: Props) {
+  // 与 PatientDonut 的 amber/blue/emerald 完全错开
   const data = [
-    { type: "MD-全流程", count: mdFullFlow, color: "#3b82f6" },
-    { type: "MD-仅初诊", count: mdInitialOnly, color: "#8b5cf6" },
-    { type: "NP", count: np, color: "#10b981" },
+    { type: "MD-全流程", count: mdFullFlow, color: "#7c3aed" }, // violet
+    { type: "MD-仅初诊", count: mdInitialOnly, color: "#ec4899" }, // pink
+    { type: "NP", count: np, color: "#0d9488" }, // 深 teal（区别于 emerald）
   ];
 
   return (

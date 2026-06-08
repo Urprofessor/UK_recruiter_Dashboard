@@ -161,11 +161,13 @@ export default async function Page() {
             title="初诊：需求 vs 产能"
             hint={`${firstWeek} → ${lastWeek}　红 = 需求，蓝 = 产能，灰虚线 = 安全线`}
             weekly={series.mdInitial}
+            forecast={decision.md.weekly}
           />
           <GapChartCard
             title="复诊 / 维持：需求 vs 产能"
             hint={`${firstWeek} → ${lastWeek}　v0 假设当前在岗人员历史不变`}
             weekly={series.followup}
+            forecast={decision.followup.weekly}
           />
         </div>
 
