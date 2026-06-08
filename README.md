@@ -48,12 +48,17 @@ lib/
   types.ts              # 共享类型
   auth.ts               # 密码 / cookie 校验
 components/
-  GapChart.tsx          # 需求 vs 产能 时序图
+  GapChartCard.tsx      # 需求 vs 产能 时序图 + 周/月切换
+  PatientDonut.tsx      # 患者阶段环形图
+  StaffBars.tsx         # 在岗人员构成柱状图
+  StatusList.tsx        # 按周状态彩点列表
+  PageShell.tsx         # 头部 + 导航
 data/
   constants.json        # 诊次时长、冗余%、lead time 等
   staff.json            # 在岗 MD/NP
   patients.json         # 当前在册患者阶段分布
   demand.json           # 未来 N 周新预约预测
+  history.json          # 历史 N 周的预约量 / 患者池快照
 middleware.ts           # 没登录就跳 /login
 ```
 

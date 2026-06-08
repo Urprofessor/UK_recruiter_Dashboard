@@ -57,11 +57,23 @@ export interface Constants {
   typicalNewHire: { weeklyHours: number; availability: number };
 }
 
+export interface WeeklyHistoryPoint {
+  weekStart: string;
+  initialBookings: number;
+  inTitration: number;
+  inMaintenance: number;
+}
+
+export interface HistoryData {
+  weekly: WeeklyHistoryPoint[];
+}
+
 export interface AllData {
   staff: StaffData;
   patients: PatientsData;
   demand: DemandData;
   constants: Constants;
+  history: HistoryData;
 }
 
 export type Status = "ok" | "tight" | "short";

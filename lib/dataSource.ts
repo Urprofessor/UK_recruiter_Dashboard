@@ -2,10 +2,12 @@ import staffJson from "@/data/staff.json";
 import patientsJson from "@/data/patients.json";
 import demandJson from "@/data/demand.json";
 import constantsJson from "@/data/constants.json";
+import historyJson from "@/data/history.json";
 import type {
   AllData,
   Constants,
   DemandData,
+  HistoryData,
   PatientsData,
   StaffData,
 } from "./types";
@@ -18,5 +20,6 @@ export async function loadAllData(): Promise<AllData> {
     patients: patientsJson as PatientsData,
     demand: demandJson as DemandData,
     constants: constantsJson as Constants,
+    history: historyJson as unknown as HistoryData,
   };
 }

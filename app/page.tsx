@@ -1,10 +1,10 @@
 import { PageShell } from "@/components/PageShell";
-import { GapChart } from "@/components/GapChart";
+import { GapChartCard } from "@/components/GapChartCard";
 import { PatientDonut } from "@/components/PatientDonut";
 import { StaffBars } from "@/components/StaffBars";
 import { StatusList } from "@/components/StatusList";
 import { loadAllData } from "@/lib/dataSource";
-import { computeDecision } from "@/lib/model";
+import { computeDecision, computeHistoricalSeries } from "@/lib/model";
 import type { RoleDecision, Status } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -131,7 +131,15 @@ function MiniMetric({
 export default async function Page() {
   const data = await loadAllData();
   const decision = computeDecision(data);
-  const { staff, patients, constants: c } = data;
+  const series = computeHistoricalSeries(
+    data.history,
+    data.staff,
+    data.demand.noShowRate,
+    data.constants,
+  );
+  const { staff, patients, constants: c, history } = data;
+  const firstWeek = history.weekly[0]?.weekStart ?? "";
+  const lastWeek = history.weekly[history.weekly.length - 1]?.weekStart ?? "";
 
   const mdInitialOnly = staff.md.filter((m) => m.subtype === "initial_only").length;
   const mdFullFlow = staff.md.filter((m) => m.subtype === "full_flow").length;
@@ -147,20 +155,18 @@ export default async function Page() {
 
       {/* Row 2: 左侧 = 两张 GapChart（详细趋势），右侧 = 三张概况卡 */}
       <section className="mt-4 grid gap-4 lg:grid-cols-3">
-        {/* 左 2/3：两张曲线图 */}
+        {/* 左 2/3：两张曲线图（含周/月切换） */}
         <div className="space-y-4 lg:col-span-2">
-          <Card
+          <GapChartCard
             title="初诊：需求 vs 产能"
-            hint="红 = 需求，蓝 = 产能，灰虚线 = 安全线（产能 ÷ (1 + 冗余)）"
-          >
-            <GapChart data={decision.md.weekly} />
-          </Card>
-          <Card
+            hint={`${firstWeek} → ${lastWeek}　红 = 需求，蓝 = 产能，灰虚线 = 安全线`}
+            weekly={series.mdInitial}
+          />
+          <GapChartCard
             title="复诊 / 维持：需求 vs 产能"
-            hint="v0 假设病人池在前瞻窗口内不变"
-          >
-            <GapChart data={decision.followup.weekly} />
-          </Card>
+            hint={`${firstWeek} → ${lastWeek}　v0 假设当前在岗人员历史不变`}
+            weekly={series.followup}
+          />
         </div>
 
         {/* 右 1/3：概况三张 */}

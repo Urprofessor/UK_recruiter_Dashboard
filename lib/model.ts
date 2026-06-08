@@ -2,9 +2,11 @@ import type {
   AllData,
   Constants,
   DashboardDecision,
+  HistoryData,
   MdStaff,
   NpStaff,
   RoleDecision,
+  StaffData,
   Status,
   WeekPoint,
 } from "./types";
@@ -252,4 +254,53 @@ function addWeeks(isoDate: string, weeks: number): string {
   const d = new Date(isoDate);
   d.setDate(d.getDate() + weeks * 7);
   return d.toISOString().slice(0, 10);
+}
+
+// ===== 历史时序：把每周快照映射成 demand/capacity 折线点 =====
+
+export interface HistoricalSeries {
+  mdInitial: WeekPoint[];
+  followup: WeekPoint[];
+}
+
+export function computeHistoricalSeries(
+  history: HistoryData,
+  staff: StaffData,
+  noShowRate: number,
+  c: Constants,
+): HistoricalSeries {
+  // 假设：staff 在历史窗口内不变（v0 简化）。
+  const mdCapPerWeek = mdInitialCapacityMinPerWeek(staff.md, c);
+  const fuCapPerWeek = followupCapacityMinPerWeek(staff.md, staff.np, c);
+
+  const mdInitial: WeekPoint[] = history.weekly.map((w) => {
+    const showRate = 1 - noShowRate;
+    const demandSessions = w.initialBookings * showRate;
+    const capacitySessions = mdCapPerWeek / c.appointmentMinutes.initial;
+    const safeCapacitySessions = capacitySessions / (1 + c.buffer.md);
+    return {
+      weekStart: w.weekStart,
+      demand: round1(demandSessions),
+      capacity: round1(capacitySessions),
+      safeCapacity: round1(safeCapacitySessions),
+    };
+  });
+
+  const followup: WeekPoint[] = history.weekly.map((w) => {
+    const avgMin = avgFollowupMinutes(w.inTitration, w.inMaintenance, c);
+    const demandMin =
+      (w.inTitration / c.titration.weeksBetweenVisits) * c.appointmentMinutes.titration +
+      (w.inMaintenance / c.maintenance.weeksBetweenVisits) * c.appointmentMinutes.maintenance;
+    const demandSessions = demandMin / avgMin;
+    const capacitySessions = fuCapPerWeek / avgMin;
+    const safeCapacitySessions = capacitySessions / (1 + c.buffer.np);
+    return {
+      weekStart: w.weekStart,
+      demand: round1(demandSessions),
+      capacity: round1(capacitySessions),
+      safeCapacity: round1(safeCapacitySessions),
+    };
+  });
+
+  return { mdInitial, followup };
 }
