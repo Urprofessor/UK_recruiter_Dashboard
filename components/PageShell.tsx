@@ -8,7 +8,7 @@ export function PageShell({
   active?: "hiring" | "monitoring";
 }) {
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-10">
+    <div className="px-4 py-6 md:px-6 md:py-8">
       <header className="mb-8 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-gray-900 text-xs font-semibold text-white">

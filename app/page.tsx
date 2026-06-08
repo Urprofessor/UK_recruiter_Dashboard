@@ -145,59 +145,62 @@ export default async function Page() {
         <HeroCard decision={decision.followup} />
       </section>
 
-      {/* Row 2: 三张概况卡（donut / bar / 状态列表） */}
-      <section className="mt-4 grid gap-4 md:grid-cols-3">
-        <Card title="在册患者结构" hint={`截至 ${patients.asOfDate}`}>
-          <PatientDonut
-            queueInitial={patients.queueInitial}
-            inTitration={patients.inTitration}
-            inMaintenance={patients.inMaintenance}
-          />
-        </Card>
+      {/* Row 2: 左侧 = 两张 GapChart（详细趋势），右侧 = 三张概况卡 */}
+      <section className="mt-4 grid gap-4 lg:grid-cols-3">
+        {/* 左 2/3：两张曲线图 */}
+        <div className="space-y-4 lg:col-span-2">
+          <Card
+            title="初诊：需求 vs 产能"
+            hint="红 = 需求，蓝 = 产能，灰虚线 = 安全线（产能 ÷ (1 + 冗余)）"
+          >
+            <GapChart data={decision.md.weekly} />
+          </Card>
+          <Card
+            title="复诊 / 维持：需求 vs 产能"
+            hint="v0 假设病人池在前瞻窗口内不变"
+          >
+            <GapChart data={decision.followup.weekly} />
+          </Card>
+        </div>
 
-        <Card title="在岗人员构成" hint={`共 ${staff.md.length + staff.np.length} 人`}>
-          <StaffBars
-            mdFullFlow={mdFullFlow}
-            mdInitialOnly={mdInitialOnly}
-            np={npCount}
-          />
-        </Card>
+        {/* 右 1/3：概况三张 */}
+        <div className="space-y-4">
+          <Card title="在册患者结构" hint={`截至 ${patients.asOfDate}`}>
+            <PatientDonut
+              queueInitial={patients.queueInitial}
+              inTitration={patients.inTitration}
+              inMaintenance={patients.inMaintenance}
+            />
+          </Card>
 
-        <Card title="按周状态" hint="超出安全冗余即变色">
-          <StatusList
-            sections={[
-              {
-                title: `MD 初诊 · 未来 ${decision.md.lookaheadWeeks} 周`,
-                weekly: decision.md.weekly,
-                buffer: c.buffer.md,
-              },
-              {
-                title: `复诊 / 维持 · 未来 ${decision.followup.lookaheadWeeks} 周`,
-                weekly: decision.followup.weekly,
-                buffer: c.buffer.np,
-              },
-            ]}
-          />
-        </Card>
+          <Card title="在岗人员构成" hint={`共 ${staff.md.length + staff.np.length} 人`}>
+            <StaffBars
+              mdFullFlow={mdFullFlow}
+              mdInitialOnly={mdInitialOnly}
+              np={npCount}
+            />
+          </Card>
+
+          <Card title="按周状态" hint="超出安全冗余即变色">
+            <StatusList
+              sections={[
+                {
+                  title: `MD 初诊 · 未来 ${decision.md.lookaheadWeeks} 周`,
+                  weekly: decision.md.weekly,
+                  buffer: c.buffer.md,
+                },
+                {
+                  title: `复诊 / 维持 · 未来 ${decision.followup.lookaheadWeeks} 周`,
+                  weekly: decision.followup.weekly,
+                  buffer: c.buffer.np,
+                },
+              ]}
+            />
+          </Card>
+        </div>
       </section>
 
-      {/* Row 3: 两张 GapChart（详细趋势） */}
-      <section className="mt-4 grid gap-4 md:grid-cols-2">
-        <Card
-          title="初诊：需求 vs 产能"
-          hint="红 = 需求，蓝 = 产能，灰虚线 = 安全线（产能 ÷ (1 + 冗余)）"
-        >
-          <GapChart data={decision.md.weekly} />
-        </Card>
-        <Card
-          title="复诊 / 维持：需求 vs 产能"
-          hint="v0 假设病人池在前瞻窗口内不变"
-        >
-          <GapChart data={decision.followup.weekly} />
-        </Card>
-      </section>
-
-      {/* Row 4: 模型常数（小，可折叠感） */}
+      {/* Row 3: 模型常数（小，可折叠感） */}
       <section className="mt-4">
         <Card title="模型常数" hint="改这些数会影响所有判断">
           <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-[12px] md:grid-cols-5">
