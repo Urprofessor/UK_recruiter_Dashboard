@@ -22,10 +22,11 @@ export interface StaffData {
   np: NpStaff[];
 }
 
+// 患者三阶段：等待首诊 → 复诊（吃药调整剂量） → 维持
 export interface PatientsData {
   asOfDate: string;
   queueInitial: number;
-  inTitration: number;
+  inFollowup: number;
   inMaintenance: number;
 }
 
@@ -37,22 +38,26 @@ export interface WeekBooking {
 export interface DemandData {
   asOfDate: string;
   noShowRate: number;
-  conversionToTitration: number;
+  conversionToFollowup: number;
   newInitialBookings: WeekBooking[];
 }
 
 export interface Constants {
   appointmentMinutes: {
     initial: number;
-    titration: number;
+    followup: number;
     maintenance: number;
   };
   buffer: { md: number; np: number };
   leadTimeWeeks: { md: number; np: number };
   lookaheadWeeks: { md: number; np: number };
-  titration: { weeksBetweenVisits: number; weeksUntilStable: number };
+  followup: { weeksBetweenVisits: number; weeksUntilStable: number };
   maintenance: { weeksBetweenVisits: number };
-  fullFlowMdSplit: { initialPct: number; followUpPct: number };
+  /**
+   * 全流程 MD 把可用时间在"初诊"和"非初诊（复诊 + 维持）"两类上的分配比例。
+   * 两个加起来应该 = 1。
+   */
+  fullFlowMdSplit: { initialPct: number; nonInitialPct: number };
   effectiveUtilization: number;
   typicalNewHire: { weeklyHours: number; availability: number };
 }
@@ -60,7 +65,7 @@ export interface Constants {
 export interface WeeklyHistoryPoint {
   weekStart: string;
   initialBookings: number;
-  inTitration: number;
+  inFollowup: number;
   inMaintenance: number;
 }
 
@@ -86,14 +91,18 @@ export interface WeekPoint {
 }
 
 export interface RoleDecision {
-  role: "md_initial" | "followup";
+  /**
+   * md_initial = MD 初诊瓶颈
+   * non_initial = 复诊 + 维持合并的产能瓶颈
+   */
+  role: "md_initial" | "non_initial";
   label: string;          // 中文显示名
   lookaheadWeeks: number;
   leadTimeWeeks: number;
   status: Status;
-  recommendation: string; // 中文建议
-  hireSuggestion: number; // 建议新增人数（按 typicalNewHire 折算）
-  hireSuggestionWho: string; // 建议招哪种角色（中文）
+  recommendation: string;
+  hireSuggestion: number;
+  hireSuggestionWho: string;
   weekly: WeekPoint[];
   totals: {
     capacitySessions: number;
@@ -105,5 +114,5 @@ export interface RoleDecision {
 export interface DashboardDecision {
   asOfDate: string;
   md: RoleDecision;
-  followup: RoleDecision;
+  nonInitial: RoleDecision;
 }

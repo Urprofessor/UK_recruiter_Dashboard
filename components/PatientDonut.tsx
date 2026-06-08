@@ -4,21 +4,21 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 interface Props {
   queueInitial: number;
-  inTitration: number;
+  inFollowup: number;
   inMaintenance: number;
 }
 
 const COLORS = {
   initial: "#f59e0b",     // amber
-  titration: "#3b82f6",   // blue
+  followup: "#3b82f6",    // blue
   maintenance: "#10b981", // emerald
 };
 
-export function PatientDonut({ queueInitial, inTitration, inMaintenance }: Props) {
-  const total = queueInitial + inTitration + inMaintenance;
+export function PatientDonut({ queueInitial, inFollowup, inMaintenance }: Props) {
+  const total = queueInitial + inFollowup + inMaintenance;
   const data = [
     { name: "等待首诊", value: queueInitial, color: COLORS.initial },
-    { name: "滴定中", value: inTitration, color: COLORS.titration },
+    { name: "复诊中", value: inFollowup, color: COLORS.followup },
     { name: "维持中", value: inMaintenance, color: COLORS.maintenance },
   ];
 

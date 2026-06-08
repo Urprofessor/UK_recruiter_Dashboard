@@ -71,7 +71,7 @@ middleware.ts           # 没登录就跳 /login
 ## 模型核心约束
 
 - **初诊**只能 MD（45 min）
-- **滴定**MD-full-flow 或 NP 都可以（30 min）
+- **复诊**（原"滴定"，调整剂量阶段）MD-full-flow 或 NP 都可以（30 min）
 - **维持**MD-full-flow 或 NP 都可以（15 min）
 - MD 内部分两类：`initial_only`（只做初诊）vs `full_flow`（全流程）
 - MD lead time = 4 周；NP lead time = 2 周

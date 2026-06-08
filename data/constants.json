@@ -1,7 +1,7 @@
 {
   "appointmentMinutes": {
     "initial": 45,
-    "titration": 30,
+    "followup": 30,
     "maintenance": 15
   },
   "buffer": {
@@ -16,7 +16,7 @@
     "md": 4,
     "np": 2
   },
-  "titration": {
+  "followup": {
     "weeksBetweenVisits": 2,
     "weeksUntilStable": 12
   },
@@ -25,7 +25,7 @@
   },
   "fullFlowMdSplit": {
     "initialPct": 0.5,
-    "followUpPct": 0.5
+    "nonInitialPct": 0.5
   },
   "effectiveUtilization": 0.80,
   "typicalNewHire": {

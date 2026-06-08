@@ -42,7 +42,11 @@ export function mdInitialCapacityMinPerWeek(staff: MdStaff[], c: Constants): num
   );
 }
 
-export function followupCapacityMinPerWeek(
+/**
+ * 复诊 + 维持的合并产能 = 全流程 MD 的非初诊时间 + 所有 NP 时间。
+ * 全流程 MD 才会承担复诊/维持，仅初诊 MD 不参与。
+ */
+export function nonInitialCapacityMinPerWeek(
   md: MdStaff[],
   np: NpStaff[],
   c: Constants,
@@ -50,7 +54,7 @@ export function followupCapacityMinPerWeek(
   const u = c.effectiveUtilization;
   const fullFlow = md.filter((m) => m.subtype === "full_flow");
   return (
-    sumEffectiveMin(fullFlow, u) * c.fullFlowMdSplit.followUpPct +
+    sumEffectiveMin(fullFlow, u) * c.fullFlowMdSplit.nonInitialPct +
     sumEffectiveMin(np, u)
   );
 }
@@ -66,15 +70,20 @@ export function initialDemandMinForWeek(
   return expectedBookings * showRate * c.appointmentMinutes.initial;
 }
 
-export function followupDemandMinPerWeek(
-  inTitration: number,
+/**
+ * 复诊 + 维持的合并需求（分钟/周）。
+ * - 复诊：每位病人按 followup.weeksBetweenVisits 看 1 次
+ * - 维持：每位病人按 maintenance.weeksBetweenVisits 看 1 次
+ */
+export function nonInitialDemandMinPerWeek(
+  inFollowup: number,
   inMaintenance: number,
   c: Constants,
 ): number {
-  const titrationVisitsPerWeek = inTitration / c.titration.weeksBetweenVisits;
+  const followupVisitsPerWeek = inFollowup / c.followup.weeksBetweenVisits;
   const maintenanceVisitsPerWeek = inMaintenance / c.maintenance.weeksBetweenVisits;
   return (
-    titrationVisitsPerWeek * c.appointmentMinutes.titration +
+    followupVisitsPerWeek * c.appointmentMinutes.followup +
     maintenanceVisitsPerWeek * c.appointmentMinutes.maintenance
   );
 }
@@ -134,7 +143,6 @@ export function computeDecision(data: AllData): DashboardDecision {
     .map((w) => statusFromGap(w.capacity, w.demand, c.buffer.md))
     .reduce(worstStatus, "ok");
   const mdShortageMin = Math.max(0, mdTotalDemandMin * (1 + c.buffer.md) - mdTotalCapacityMin);
-  // 新初诊 MD 的所有时间都用于初诊 → fraction = 1.0
   const mdHire = additionalHiresNeeded(mdShortageMin, mdWeeks, c, 1.0);
 
   const mdDecision: RoleDecision = {
@@ -156,58 +164,66 @@ export function computeDecision(data: AllData): DashboardDecision {
     },
   };
 
-  // ---- 复诊/维持检查（看未来 c.lookaheadWeeks.np 周） ----
-  const fuWeeks = c.lookaheadWeeks.np;
-  const fuCapPerWeek = followupCapacityMinPerWeek(staff.md, staff.np, c);
-  const fuDemandMinPerWeek = followupDemandMinPerWeek(
-    patients.inTitration,
+  // ---- 复诊 + 维持合并检查（看未来 c.lookaheadWeeks.np 周） ----
+  const niWeeks = c.lookaheadWeeks.np;
+  const niCapPerWeek = nonInitialCapacityMinPerWeek(staff.md, staff.np, c);
+  const niDemandMinPerWeek = nonInitialDemandMinPerWeek(
+    patients.inFollowup,
     patients.inMaintenance,
     c,
   );
-  // 平均复诊时长（用于把分钟换成"诊次"显示）
-  const avgFollowupMin = avgFollowupMinutes(patients.inTitration, patients.inMaintenance, c);
+  // 平均"非初诊"诊次时长（用于把分钟换成"诊次"显示）
+  const avgNonInitialMin = avgNonInitialMinutes(
+    patients.inFollowup,
+    patients.inMaintenance,
+    c,
+  );
 
-  const fuWeekly: WeekPoint[] = [];
-  // v0 假设未来 N 周复诊需求恒定（病人池变化忽略）
-  for (let i = 0; i < fuWeeks; i++) {
+  const niWeekly: WeekPoint[] = [];
+  // v0 假设未来 N 周复诊/维持需求恒定（病人池变化忽略）
+  for (let i = 0; i < niWeeks; i++) {
     const weekStart = addWeeks(demand.asOfDate, i);
-    const demandSessions = fuDemandMinPerWeek / avgFollowupMin;
-    const capacitySessions = fuCapPerWeek / avgFollowupMin;
+    const demandSessions = niDemandMinPerWeek / avgNonInitialMin;
+    const capacitySessions = niCapPerWeek / avgNonInitialMin;
     const safeCapacitySessions = capacitySessions / (1 + c.buffer.np);
-    fuWeekly.push({
+    niWeekly.push({
       weekStart,
       demand: round1(demandSessions),
       capacity: round1(capacitySessions),
       safeCapacity: round1(safeCapacitySessions),
     });
   }
-  const fuTotalDemandMin = fuDemandMinPerWeek * fuWeeks;
-  const fuTotalCapacityMin = fuCapPerWeek * fuWeeks;
-  const fuStatus = fuWeekly
+  const niTotalDemandMin = niDemandMinPerWeek * niWeeks;
+  const niTotalCapacityMin = niCapPerWeek * niWeeks;
+  const niStatus = niWeekly
     .map((w) => statusFromGap(w.capacity, w.demand, c.buffer.np))
     .reduce(worstStatus, "ok");
-  const fuShortageMin = Math.max(
+  const niShortageMin = Math.max(
     0,
-    fuTotalDemandMin * (1 + c.buffer.np) - fuTotalCapacityMin,
+    niTotalDemandMin * (1 + c.buffer.np) - niTotalCapacityMin,
   );
-  // NP 的所有时间都用于复诊 → fraction = 1.0
-  const fuHire = additionalHiresNeeded(fuShortageMin, fuWeeks, c, 1.0);
+  const niHire = additionalHiresNeeded(niShortageMin, niWeeks, c, 1.0);
 
-  const fuDecision: RoleDecision = {
-    role: "followup",
+  const niDecision: RoleDecision = {
+    role: "non_initial",
     label: "复诊 / 维持产能（未来 2 周）",
-    lookaheadWeeks: fuWeeks,
+    lookaheadWeeks: niWeeks,
     leadTimeWeeks: c.leadTimeWeeks.np,
-    status: fuStatus,
-    recommendation: recommendationText(fuStatus, fuHire, "NP（或全流程 MD）", c.leadTimeWeeks.np),
-    hireSuggestion: fuHire,
+    status: niStatus,
+    recommendation: recommendationText(
+      niStatus,
+      niHire,
+      "NP（或全流程 MD）",
+      c.leadTimeWeeks.np,
+    ),
+    hireSuggestion: niHire,
     hireSuggestionWho: "NP（或全流程 MD）",
-    weekly: fuWeekly,
+    weekly: niWeekly,
     totals: {
-      capacitySessions: round1(fuTotalCapacityMin / avgFollowupMin),
-      demandSessions: round1(fuTotalDemandMin / avgFollowupMin),
+      capacitySessions: round1(niTotalCapacityMin / avgNonInitialMin),
+      demandSessions: round1(niTotalDemandMin / avgNonInitialMin),
       safeCapacitySessions: round1(
-        (fuTotalCapacityMin / (1 + c.buffer.np)) / avgFollowupMin,
+        (niTotalCapacityMin / (1 + c.buffer.np)) / avgNonInitialMin,
       ),
     },
   };
@@ -215,18 +231,22 @@ export function computeDecision(data: AllData): DashboardDecision {
   return {
     asOfDate: demand.asOfDate,
     md: mdDecision,
-    followup: fuDecision,
+    nonInitial: niDecision,
   };
 }
 
 // ===== Helpers =====
 
-function avgFollowupMinutes(inTit: number, inMaint: number, c: Constants): number {
-  const titV = inTit / c.titration.weeksBetweenVisits;
+function avgNonInitialMinutes(inFu: number, inMaint: number, c: Constants): number {
+  const fuV = inFu / c.followup.weeksBetweenVisits;
   const maintV = inMaint / c.maintenance.weeksBetweenVisits;
-  const totalV = titV + maintV;
-  if (totalV === 0) return c.appointmentMinutes.titration; // 防 0
-  return (titV * c.appointmentMinutes.titration + maintV * c.appointmentMinutes.maintenance) / totalV;
+  const totalV = fuV + maintV;
+  if (totalV === 0) return c.appointmentMinutes.followup; // 防 0
+  return (
+    (fuV * c.appointmentMinutes.followup +
+      maintV * c.appointmentMinutes.maintenance) /
+    totalV
+  );
 }
 
 function worstStatus(a: Status, b: Status): Status {
@@ -260,7 +280,7 @@ function addWeeks(isoDate: string, weeks: number): string {
 
 export interface HistoricalSeries {
   mdInitial: WeekPoint[];
-  followup: WeekPoint[];
+  nonInitial: WeekPoint[];
 }
 
 export function computeHistoricalSeries(
@@ -271,7 +291,7 @@ export function computeHistoricalSeries(
 ): HistoricalSeries {
   // 假设：staff 在历史窗口内不变（v0 简化）。
   const mdCapPerWeek = mdInitialCapacityMinPerWeek(staff.md, c);
-  const fuCapPerWeek = followupCapacityMinPerWeek(staff.md, staff.np, c);
+  const niCapPerWeek = nonInitialCapacityMinPerWeek(staff.md, staff.np, c);
 
   const mdInitial: WeekPoint[] = history.weekly.map((w) => {
     const showRate = 1 - noShowRate;
@@ -286,13 +306,13 @@ export function computeHistoricalSeries(
     };
   });
 
-  const followup: WeekPoint[] = history.weekly.map((w) => {
-    const avgMin = avgFollowupMinutes(w.inTitration, w.inMaintenance, c);
+  const nonInitial: WeekPoint[] = history.weekly.map((w) => {
+    const avgMin = avgNonInitialMinutes(w.inFollowup, w.inMaintenance, c);
     const demandMin =
-      (w.inTitration / c.titration.weeksBetweenVisits) * c.appointmentMinutes.titration +
+      (w.inFollowup / c.followup.weeksBetweenVisits) * c.appointmentMinutes.followup +
       (w.inMaintenance / c.maintenance.weeksBetweenVisits) * c.appointmentMinutes.maintenance;
     const demandSessions = demandMin / avgMin;
-    const capacitySessions = fuCapPerWeek / avgMin;
+    const capacitySessions = niCapPerWeek / avgMin;
     const safeCapacitySessions = capacitySessions / (1 + c.buffer.np);
     return {
       weekStart: w.weekStart,
@@ -302,5 +322,5 @@ export function computeHistoricalSeries(
     };
   });
 
-  return { mdInitial, followup };
+  return { mdInitial, nonInitial };
 }

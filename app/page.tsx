@@ -150,7 +150,7 @@ export default async function Page() {
       {/* Row 1: 两张判断卡（顶部，最重要） */}
       <section className="grid gap-4 md:grid-cols-2">
         <HeroCard decision={decision.md} />
-        <HeroCard decision={decision.followup} />
+        <HeroCard decision={decision.nonInitial} />
       </section>
 
       {/* Row 2: 左侧 = 两张 GapChart（详细趋势），右侧 = 三张概况卡 */}
@@ -166,8 +166,8 @@ export default async function Page() {
           <GapChartCard
             title="复诊 / 维持：需求 vs 产能"
             hint={`${firstWeek} → ${lastWeek}　v0 假设当前在岗人员历史不变`}
-            weekly={series.followup}
-            forecast={decision.followup.weekly}
+            weekly={series.nonInitial}
+            forecast={decision.nonInitial.weekly}
           />
         </div>
 
@@ -176,7 +176,7 @@ export default async function Page() {
           <Card title="在册患者结构" hint={`截至 ${patients.asOfDate}`}>
             <PatientDonut
               queueInitial={patients.queueInitial}
-              inTitration={patients.inTitration}
+              inFollowup={patients.inFollowup}
               inMaintenance={patients.inMaintenance}
             />
           </Card>
@@ -198,8 +198,8 @@ export default async function Page() {
                   buffer: c.buffer.md,
                 },
                 {
-                  title: `复诊 / 维持 · 未来 ${decision.followup.lookaheadWeeks} 周`,
-                  weekly: decision.followup.weekly,
+                  title: `复诊 / 维持 · 未来 ${decision.nonInitial.lookaheadWeeks} 周`,
+                  weekly: decision.nonInitial.weekly,
                   buffer: c.buffer.np,
                 },
               ]}
@@ -213,8 +213,8 @@ export default async function Page() {
         <Card title="模型常数" hint="改这些数会影响所有判断">
           <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-[12px] md:grid-cols-5">
             <ConstantRow
-              label="诊次时长（初/滴/维）"
-              value={`${c.appointmentMinutes.initial}/${c.appointmentMinutes.titration}/${c.appointmentMinutes.maintenance} min`}
+              label="诊次时长（初/复/维）"
+              value={`${c.appointmentMinutes.initial}/${c.appointmentMinutes.followup}/${c.appointmentMinutes.maintenance} min`}
             />
             <ConstantRow
               label="冗余 % (MD/NP)"
@@ -230,7 +230,7 @@ export default async function Page() {
             />
             <ConstantRow
               label="全流程 MD 时间分配"
-              value={`${Math.round(c.fullFlowMdSplit.initialPct * 100)}% 初 / ${Math.round(c.fullFlowMdSplit.followUpPct * 100)}% 复`}
+              value={`${Math.round(c.fullFlowMdSplit.initialPct * 100)}% 初 / ${Math.round(c.fullFlowMdSplit.nonInitialPct * 100)}% 复+维`}
             />
           </dl>
         </Card>
