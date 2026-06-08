@@ -1,0 +1,35 @@
+{
+  "appointmentMinutes": {
+    "initial": 45,
+    "titration": 30,
+    "maintenance": 15
+  },
+  "buffer": {
+    "md": 0.20,
+    "np": 0.20
+  },
+  "leadTimeWeeks": {
+    "md": 4,
+    "np": 2
+  },
+  "lookaheadWeeks": {
+    "md": 4,
+    "np": 2
+  },
+  "titration": {
+    "weeksBetweenVisits": 2,
+    "weeksUntilStable": 12
+  },
+  "maintenance": {
+    "weeksBetweenVisits": 12
+  },
+  "fullFlowMdSplit": {
+    "initialPct": 0.5,
+    "followUpPct": 0.5
+  },
+  "effectiveUtilization": 0.80,
+  "typicalNewHire": {
+    "weeklyHours": 32,
+    "availability": 0.92
+  }
+}

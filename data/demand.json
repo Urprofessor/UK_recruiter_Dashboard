@@ -1,0 +1,11 @@
+{
+  "asOfDate": "2026-06-08",
+  "noShowRate": 0.12,
+  "conversionToTitration": 0.85,
+  "newInitialBookings": [
+    { "weekStart": "2026-06-08", "expected": 28 },
+    { "weekStart": "2026-06-15", "expected": 32 },
+    { "weekStart": "2026-06-22", "expected": 35 },
+    { "weekStart": "2026-06-29", "expected": 38 }
+  ]
+}
