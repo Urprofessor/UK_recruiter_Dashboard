@@ -195,9 +195,7 @@ export function GapChartCard({
                 borderRadius: 6,
                 border: "1px solid #e5e7eb",
               }}
-              formatter={(value: number | null, name: string) =>
-                value == null ? ["—", name] : [`${value} 诊次`, name]
-              }
+              formatter={(value, name) => [`${value} 诊次`, name]}
             />
             <Legend wrapperStyle={{ fontSize: 11 }} iconType="plainline" />
             {/* 历史需求 */}
