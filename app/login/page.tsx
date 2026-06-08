@@ -38,7 +38,7 @@ function LoginForm() {
   return (
     <form
       onSubmit={onSubmit}
-      className="w-full max-w-sm space-y-6 rounded-xl border border-gray-200 bg-white p-8 shadow-sm"
+      className="w-full max-w-sm space-y-6 rounded-xl border border-[#f0eeea] bg-white p-8 shadow-sm"
     >
       <div>
         <h1 className="text-lg font-semibold text-gray-900">
@@ -68,7 +68,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+    <div className="flex min-h-screen items-center justify-center bg-[#faf9f7] p-4">
       <Suspense fallback={null}>
         <LoginForm />
       </Suspense>
