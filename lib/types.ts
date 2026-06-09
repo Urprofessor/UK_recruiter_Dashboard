@@ -58,6 +58,12 @@ export interface Constants {
    * 两个加起来应该 = 1。
    */
   fullFlowMdSplit: { initialPct: number; nonInitialPct: number };
+  /**
+   * 新患者首诊后进入复诊（drug initiation / 调药）阶段的比例。
+   * 默认 0.60 —— 40% 的人首诊后情况简单 / 不继续，不进复诊池。
+   * 仅在前瞻预测"未来复诊池增长"时用到。
+   */
+  titrationRatio: number;
   effectiveUtilization: number;
   typicalNewHire: { weeklyHours: number; availability: number };
 }
@@ -78,7 +84,8 @@ export interface AllData {
   patients: PatientsData;
   demand: DemandData;
   constants: Constants;
-  history: HistoryData;
+  /** 历史 23 周快照。仅 dashboard 主页用；balance sheet 页可不传。 */
+  history?: HistoryData;
 }
 
 export type Status = "ok" | "tight" | "short";

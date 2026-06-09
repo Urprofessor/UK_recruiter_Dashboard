@@ -34,7 +34,7 @@ export function PageShell({
             招聘判断
           </Link>
           <Link
-            href="/monitoring"
+            href="/balance-sheet"
             className={
               "rounded-md px-3 py-1.5 transition-colors " +
               (active === "monitoring"
@@ -42,7 +42,7 @@ export function PageShell({
                 : "text-gray-600 hover:bg-gray-100")
             }
           >
-            日常监控
+            平衡表
           </Link>
         </nav>
       </header>

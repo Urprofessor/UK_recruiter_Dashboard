@@ -9,27 +9,28 @@
     "np": 0.20
   },
   "leadTimeWeeks": {
-    "md": 4,
-    "np": 2
+    "md": 12,
+    "np": 8
   },
   "lookaheadWeeks": {
-    "md": 4,
-    "np": 2
+    "md": 12,
+    "np": 8
   },
   "followup": {
     "weeksBetweenVisits": 2,
     "weeksUntilStable": 12
   },
   "maintenance": {
-    "weeksBetweenVisits": 12
+    "weeksBetweenVisits": 2.5
   },
   "fullFlowMdSplit": {
     "initialPct": 0.5,
     "nonInitialPct": 0.5
   },
-  "effectiveUtilization": 0.80,
+  "titrationRatio": 0.60,
+  "effectiveUtilization": 0.85,
   "typicalNewHire": {
-    "weeklyHours": 32,
+    "weeklyHours": 25,
     "availability": 0.92
   }
 }
