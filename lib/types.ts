@@ -84,8 +84,7 @@ export interface AllData {
   patients: PatientsData;
   demand: DemandData;
   constants: Constants;
-  /** 历史 23 周快照。仅 dashboard 主页用；balance sheet 页可不传。 */
-  history?: HistoryData;
+  history: HistoryData;
 }
 
 export type Status = "ok" | "tight" | "short";
