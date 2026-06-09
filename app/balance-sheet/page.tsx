@@ -3,67 +3,63 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageShell } from "@/components/PageShell";
 
-const STORAGE_KEY = "balance-sheet-params-v1";
-const STORAGE_TS_KEY = "balance-sheet-params-v1:at";
+const STORAGE_KEY = "balance-sheet-params-v2";
+const STORAGE_TS_KEY = "balance-sheet-params-v2:at";
 
 // ============================================================
-// 类型 & 默认值
+// 参数 schema（22 项全部可调）
 // ============================================================
 
 interface Params {
-  // A. 在岗人员
-  mdInitOnly: number;
-  mdFullFlow: number;
-  np: number;
-  mdHours: number; // 周有效工时
-  npHours: number;
-  // B. 当前在册患者
+  // A · 人员
+  nFullFlowMD: number;
+  nPureDxMD: number;
+  nTitration: number;
+  hMD: number;
+  hTitration: number;
+  // B · 当前在册患者
   queueInitial: number;
-  inFollowup: number;
-  inMaintenance: number;
-  // C. 未来 4 周新增首诊
+  panelFullFlow: number;
+  panelTitration: number;
+  // C · 未来 4 周新增首诊预期
   bookings: [number, number, number, number];
-  // D. 诊次时长 (min)
+  // D · 诊次时长（分钟）
   tauInit: number;
   tauDrug: number;
   tauFu: number;
-  // E. 周期 & 比例
-  iDrug: number; // 复诊间隔（周）
-  iFu: number; // 维持间隔（周）
-  rTit: number; // titration ratio (0..1)
-  rNs: number; // no-show (0..1)
-  sInit: number; // 全流程 MD 投在初诊的比例 (0..1)
-  // F. 冗余 & lead time
-  bufferMD: number;
-  bufferNP: number;
+  // E · 周期 & 比例
+  fuRate: number;
+  noShowRate: number;
+  // F · 决策参数
+  buffer: number;
   utilization: number;
-  leadMD: number; // 周
-  leadNP: number; // 周
+  leadMD: number;
+  leadTit: number;
+  panelLimit: number;
+  panelWarn: number;
 }
 
 const DEFAULTS: Params = {
-  mdInitOnly: 5,
-  mdFullFlow: 3,
-  np: 5,
-  mdHours: 25,
-  npHours: 25,
+  nFullFlowMD: 3,
+  nPureDxMD: 5,
+  nTitration: 5,
+  hMD: 25,
+  hTitration: 25,
   queueInitial: 24,
-  inFollowup: 280,
-  inMaintenance: 2600,
+  panelFullFlow: 150,
+  panelTitration: 2450,
   bookings: [28, 32, 35, 38],
   tauInit: 45,
   tauDrug: 30,
   tauFu: 15,
-  iDrug: 2,
-  iFu: 2.5,
-  rTit: 0.6,
-  rNs: 0.12,
-  sInit: 0.5,
-  bufferMD: 0.2,
-  bufferNP: 0.2,
+  fuRate: 0.5,
+  noShowRate: 0.12,
+  buffer: 0.2,
   utilization: 0.85,
   leadMD: 12,
-  leadNP: 8,
+  leadTit: 8,
+  panelLimit: 200,
+  panelWarn: 150,
 };
 
 // ============================================================
@@ -73,109 +69,144 @@ const DEFAULTS: Params = {
 type Status = "ok" | "tight" | "short";
 
 interface Balance {
-  // MD initial line
-  coverageMD: number;
-  statusMD: Status;
-  gapMDMin: number;
-  hiresMD: number;
-  // Non-initial line
-  coverageNI: number;
-  statusNI: Status;
-  gapNIMin: number;
-  hiresNP: number;
+  // Bucket A: 全流程 MD
+  bucketA: {
+    totalHours: number;
+    existingHours: number;
+    freeHours: number;
+    newCap: number;
+  };
+  // Bucket B: 纯诊断 MD + Titration Team
+  bucketB: {
+    pureDxHours: number;
+    dxCap: number;
+    titHours: number;
+    titExistingHours: number;
+    titFreeHours: number;
+    titCap: number;
+    bottleneck: "diagnosis" | "titration" | "balanced";
+    bucketTotal: number;
+  };
+  // 全院
+  totalCap: number;
+  // 与需求对比
+  weeklyExpected: number;
+  totalExpectedNext: number;
+  coverage: number;
+  status: Status;
+  // 缺口
+  gapPerWeek: number;
+  // 建议招聘
+  hireMD: number;
+  hireTit: number;
+  // Panel
+  fullFlowPerMD: number;
+  atLimit: boolean;
+  atWarn: boolean;
   // Windows
   W_MD: number;
-  W_NP: number;
-  // Demand breakdown (totals over respective windows, in minutes)
-  D_init_total: number;
-  D_drug_total: number;
-  D_fu_total: number;
-  // Capacity breakdown (totals over respective windows, in minutes)
-  C_mdInitOnly_init: number; // contributes to initial line over W_MD
-  C_mdFullFlow_init: number; // contributes to initial line over W_MD
-  C_mdFullFlow_ni: number; // contributes to non-initial line over W_NP
-  C_np_ni: number; // contributes to non-initial line over W_NP
+  W_Tit: number;
 }
 
 function computeBalance(p: Params): Balance {
   const u = p.utilization;
-  const E_MD = p.mdHours * 60 * u; // 单位 min/周/人
-  const E_NP = p.npHours * 60 * u;
+  const tauInit = p.tauInit / 60;
+  const tauDrug = p.tauDrug / 60;
+  const tauFu = p.tauFu / 60;
+  const onboardA = tauInit + tauDrug;
 
-  // 容量（每周分钟）
-  const C_init_pw =
-    p.mdInitOnly * E_MD + p.mdFullFlow * E_MD * p.sInit;
-  const C_ni_pw =
-    p.mdFullFlow * E_MD * (1 - p.sInit) + p.np * E_NP;
+  // === Bucket A ===
+  const totalHoursA = p.nFullFlowMD * p.hMD * u;
+  const existingA = p.panelFullFlow * p.fuRate * tauFu;
+  const freeA = totalHoursA - existingA;
+  const newCapA = Math.max(0, freeA) / onboardA;
 
-  // 非初诊每周需求（分钟）—— v0 稳态假设
-  const D_drug_pw = (p.inFollowup / p.iDrug) * p.tauDrug;
-  const D_fu_pw = (p.inMaintenance / p.iFu) * p.tauFu;
-  const D_ni_pw = D_drug_pw + D_fu_pw;
+  // === Bucket B ===
+  const pureDxHours = p.nPureDxMD * p.hMD * u;
+  const dxCap = pureDxHours / tauInit;
 
-  // 前瞻窗口
+  const titHours = p.nTitration * p.hTitration * u;
+  const titExisting = p.panelTitration * p.fuRate * tauFu;
+  const titFree = Math.max(0, titHours - titExisting);
+  const titCap = titFree / tauDrug;
+
+  const bucketBTotal = Math.min(dxCap, titCap);
+  const bottleneck: "diagnosis" | "titration" | "balanced" =
+    Math.abs(dxCap - titCap) < 0.5
+      ? "balanced"
+      : dxCap < titCap
+      ? "diagnosis"
+      : "titration";
+
+  const totalCap = newCapA + bucketBTotal;
+
+  // === 预期需求 ===
   const W_MD = Math.max(1, p.leadMD);
-  const W_NP = Math.max(1, p.leadNP);
+  const W_Tit = Math.max(1, p.leadTit);
+  const avg = p.bookings.reduce((a, b) => a + b, 0) / p.bookings.length;
+  let totalExpected = 0;
+  for (let i = 0; i < W_MD; i++) {
+    const b = i < p.bookings.length ? p.bookings[i] : avg;
+    totalExpected += b * (1 - p.noShowRate);
+  }
+  const weeklyExpected = totalExpected / W_MD;
 
-  // 初诊累计需求：已知前 4 周用 bookings；超出 4 周用平均外推
-  const avgBooking =
-    p.bookings.reduce((a, b) => a + b, 0) / p.bookings.length;
-  let D_init_total = 0;
-  for (let w = 0; w < W_MD; w++) {
-    const b = w < p.bookings.length ? p.bookings[w] : avgBooking;
-    D_init_total += b * (1 - p.rNs) * p.tauInit;
+  // === 状态 ===
+  const coverage = weeklyExpected > 0 ? totalCap / weeklyExpected : Infinity;
+  const status: Status =
+    coverage >= 1 + p.buffer ? "ok" : coverage >= 1 ? "tight" : "short";
+
+  // === 缺口 + 建议招聘 ===
+  const gapPerWeek = Math.max(0, weeklyExpected * (1 + p.buffer) - totalCap);
+  const TYPICAL_NEW_HIRE_HOURS = 25;
+  const newMDPerHire = (TYPICAL_NEW_HIRE_HOURS * u) / (tauInit + tauDrug); // 全流程 MD 每周能接的新患者
+  const newTitPerHire = (TYPICAL_NEW_HIRE_HOURS * u) / tauDrug;
+  let hireMD = 0;
+  let hireTit = 0;
+  if (gapPerWeek > 0) {
+    if (bottleneck === "titration") {
+      hireTit = Math.ceil(gapPerWeek / newTitPerHire);
+    } else {
+      hireMD = Math.ceil(gapPerWeek / newMDPerHire);
+    }
   }
 
-  // 累计
-  const C_init_total = C_init_pw * W_MD;
-  const C_ni_total = C_ni_pw * W_NP;
-  const D_ni_total = D_ni_pw * W_NP;
-  const D_drug_total = D_drug_pw * W_NP;
-  const D_fu_total = D_fu_pw * W_NP;
-
-  // Coverage
-  const coverageMD = D_init_total > 0 ? C_init_total / D_init_total : Infinity;
-  const coverageNI = D_ni_total > 0 ? C_ni_total / D_ni_total : Infinity;
-
-  // 状态
-  const cls = (c: number, b: number): Status =>
-    c >= 1 + b ? "ok" : c >= 1 ? "tight" : "short";
-  const statusMD = cls(coverageMD, p.bufferMD);
-  const statusNI = cls(coverageNI, p.bufferNP);
-
-  // 缺口（正数 = 不够）
-  const gapMDMin = D_init_total * (1 + p.bufferMD) - C_init_total;
-  const gapNIMin = D_ni_total * (1 + p.bufferNP) - C_ni_total;
-
-  // 建议招聘人数（基于"典型新员工"= 25 h/周 × u）
-  const E_new = 25 * 60 * u;
-  const hiresMD = gapMDMin > 0 ? Math.ceil(gapMDMin / (E_new * W_MD)) : 0;
-  const hiresNP = gapNIMin > 0 ? Math.ceil(gapNIMin / (E_new * W_NP)) : 0;
-
-  // 容量分项
-  const C_mdInitOnly_init = p.mdInitOnly * E_MD * W_MD;
-  const C_mdFullFlow_init = p.mdFullFlow * E_MD * p.sInit * W_MD;
-  const C_mdFullFlow_ni = p.mdFullFlow * E_MD * (1 - p.sInit) * W_NP;
-  const C_np_ni = p.np * E_NP * W_NP;
+  // === Panel ===
+  const fullFlowPerMD =
+    p.nFullFlowMD > 0 ? p.panelFullFlow / p.nFullFlowMD : 0;
+  const atLimit = fullFlowPerMD >= p.panelLimit;
+  const atWarn = fullFlowPerMD >= p.panelWarn;
 
   return {
-    coverageMD,
-    statusMD,
-    gapMDMin,
-    hiresMD,
-    coverageNI,
-    statusNI,
-    gapNIMin,
-    hiresNP,
+    bucketA: {
+      totalHours: totalHoursA,
+      existingHours: existingA,
+      freeHours: freeA,
+      newCap: newCapA,
+    },
+    bucketB: {
+      pureDxHours,
+      dxCap,
+      titHours,
+      titExistingHours: titExisting,
+      titFreeHours: titFree,
+      titCap,
+      bottleneck,
+      bucketTotal: bucketBTotal,
+    },
+    totalCap,
+    weeklyExpected,
+    totalExpectedNext: totalExpected,
+    coverage,
+    status,
+    gapPerWeek,
+    hireMD,
+    hireTit,
+    fullFlowPerMD,
+    atLimit,
+    atWarn,
     W_MD,
-    W_NP,
-    D_init_total,
-    D_drug_total,
-    D_fu_total,
-    C_mdInitOnly_init,
-    C_mdFullFlow_init,
-    C_mdFullFlow_ni,
-    C_np_ni,
+    W_Tit,
   };
 }
 
@@ -189,17 +220,13 @@ const STATUS_META: Record<Status, { dot: string; text: string; label: string }> 
   short: { dot: "bg-red-500", text: "text-red-700", label: "不够" },
 };
 
-const fmtNum = (n: number, digits = 0) =>
-  Number.isFinite(n) ? n.toLocaleString(undefined, {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }) : "—";
-
-const fmtHours = (min: number) => (min / 60).toFixed(1);
-const fmtSessions = (min: number, dur: number) => Math.round(min / dur);
+const fmt1 = (n: number) =>
+  Number.isFinite(n) ? n.toFixed(1) : "—";
+const fmt0 = (n: number) =>
+  Number.isFinite(n) ? Math.round(n).toLocaleString() : "—";
 
 // ============================================================
-// 小组件
+// UI 子组件
 // ============================================================
 
 function NumberInput({
@@ -303,15 +330,12 @@ export default function BalanceSheetPage() {
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [justSaved, setJustSaved] = useState(false);
 
-  // 首次挂载时从 localStorage 读取上次保存的值
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        // 与 DEFAULTS 合并，防止以后加字段时旧数据缺字段
         const merged: Params = { ...DEFAULTS, ...parsed };
-        // bookings 是 tuple，需要兜底
         if (!Array.isArray(merged.bookings) || merged.bookings.length !== 4) {
           merged.bookings = DEFAULTS.bookings;
         }
@@ -321,7 +345,7 @@ export default function BalanceSheetPage() {
       const atRaw = localStorage.getItem(STORAGE_TS_KEY);
       if (atRaw) setSavedAt(Number(atRaw));
     } catch {
-      // 静默：localStorage 不可用就用 DEFAULTS
+      // ignore
     }
   }, []);
 
@@ -330,7 +354,6 @@ export default function BalanceSheetPage() {
   function update<K extends keyof Params>(key: K, value: Params[K]) {
     setParams((p) => ({ ...p, [key]: value }));
   }
-
   function updateBooking(i: number, v: number) {
     setParams((p) => {
       const next = [...p.bookings] as Params["bookings"];
@@ -338,7 +361,6 @@ export default function BalanceSheetPage() {
       return { ...p, bookings: next };
     });
   }
-
   function save() {
     try {
       const now = Date.now();
@@ -349,14 +371,12 @@ export default function BalanceSheetPage() {
       setJustSaved(true);
       window.setTimeout(() => setJustSaved(false), 1500);
     } catch (e) {
-      console.error("保存失败：", e);
-      alert("保存失败，浏览器可能禁用了 localStorage。");
+      console.error(e);
+      alert("保存失败：" + e);
     }
   }
-
   function resetToDefaults() {
     setParams(DEFAULTS);
-    // 不动 localStorage——用户想"清空保存"需要点重置后再点保存
   }
 
   const hasUnsavedChanges = useMemo(
@@ -380,11 +400,11 @@ export default function BalanceSheetPage() {
   return (
     <PageShell active="monitoring">
       <div className="grid gap-4 lg:grid-cols-5">
-        {/* ===== 左：参数（25 个，分 6 块）===== */}
+        {/* ===== 左：参数 ===== */}
         <aside className="space-y-3 lg:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-2 px-1">
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">参数（可调）</h2>
+              <h2 className="text-sm font-semibold text-gray-900">参数（22 项可调）</h2>
               <p className="mt-0.5 text-[10px] text-gray-400">
                 {hasUnsavedChanges
                   ? "● 有未保存修改"
@@ -420,20 +440,23 @@ export default function BalanceSheetPage() {
 
           <Section title="A · 在岗人员">
             <div className="grid grid-cols-3 gap-3">
-              <NumberInput label="仅初诊 MD" value={params.mdInitOnly} onChange={(v) => update("mdInitOnly", v)} unit="人" min={0} />
-              <NumberInput label="全流程 MD" value={params.mdFullFlow} onChange={(v) => update("mdFullFlow", v)} unit="人" min={0} />
-              <NumberInput label="NP" value={params.np} onChange={(v) => update("np", v)} unit="人" min={0} />
-              <NumberInput label="MD 周工时" value={params.mdHours} onChange={(v) => update("mdHours", v)} unit="h" step={0.5} min={0} />
-              <NumberInput label="NP 周工时" value={params.npHours} onChange={(v) => update("npHours", v)} unit="h" step={0.5} min={0} />
+              <NumberInput label="全流程 MD" value={params.nFullFlowMD} onChange={(v) => update("nFullFlowMD", v)} unit="人" min={0} />
+              <NumberInput label="纯诊断 MD" value={params.nPureDxMD} onChange={(v) => update("nPureDxMD", v)} unit="人" min={0} />
+              <NumberInput label="Titration" value={params.nTitration} onChange={(v) => update("nTitration", v)} unit="人" min={0} />
+              <NumberInput label="MD 周工时" value={params.hMD} onChange={(v) => update("hMD", v)} unit="h" step={0.5} min={0} />
+              <NumberInput label="Tit 周工时" value={params.hTitration} onChange={(v) => update("hTitration", v)} unit="h" step={0.5} min={0} />
             </div>
           </Section>
 
           <Section title="B · 当前在册患者">
             <div className="grid grid-cols-3 gap-3">
               <NumberInput label="等待首诊" value={params.queueInitial} onChange={(v) => update("queueInitial", v)} unit="人" min={0} />
-              <NumberInput label="复诊中" value={params.inFollowup} onChange={(v) => update("inFollowup", v)} unit="人" min={0} />
-              <NumberInput label="维持中" value={params.inMaintenance} onChange={(v) => update("inMaintenance", v)} unit="人" min={0} />
+              <NumberInput label="全流程 panel" value={params.panelFullFlow} onChange={(v) => update("panelFullFlow", v)} unit="人" min={0} />
+              <NumberInput label="Titration panel" value={params.panelTitration} onChange={(v) => update("panelTitration", v)} unit="人" min={0} />
             </div>
+            <p className="mt-2 text-[10px] text-gray-400">
+              全流程 = 由全流程 MD 一条龙跟的；Titration = 由 Titration Team 接管维持的
+            </p>
           </Section>
 
           <Section title="C · 未来 4 周新增首诊预期">
@@ -450,141 +473,154 @@ export default function BalanceSheetPage() {
               ))}
             </div>
             <p className="mt-2 text-[10px] text-gray-400">
-              超过 4 周的部分用这 4 周平均外推到 {b.W_MD} 周（MD lookahead 窗口）。
+              超过 4 周的部分用这 4 周平均外推到 {b.W_MD} 周
             </p>
           </Section>
 
           <Section title="D · 诊次时长">
             <div className="grid grid-cols-3 gap-3">
               <NumberInput label="初诊" value={params.tauInit} onChange={(v) => update("tauInit", v)} unit="min" min={0} />
-              <NumberInput label="复诊" value={params.tauDrug} onChange={(v) => update("tauDrug", v)} unit="min" min={0} />
-              <NumberInput label="维持" value={params.tauFu} onChange={(v) => update("tauFu", v)} unit="min" min={0} />
+              <NumberInput label="复诊（drug init）" value={params.tauDrug} onChange={(v) => update("tauDrug", v)} unit="min" min={0} />
+              <NumberInput label="维持（fu）" value={params.tauFu} onChange={(v) => update("tauFu", v)} unit="min" min={0} />
             </div>
           </Section>
 
           <Section title="E · 周期 & 比例">
             <div className="grid grid-cols-3 gap-3">
-              <NumberInput label="复诊间隔" value={params.iDrug} onChange={(v) => update("iDrug", v)} unit="周" step={0.5} min={0.1} />
-              <NumberInput label="维持间隔" value={params.iFu} onChange={(v) => update("iFu", v)} unit="周" step={0.5} min={0.1} />
-              <PercentInput label="Titration Ratio" value={params.rTit} onChange={(v) => update("rTit", v)} />
-              <PercentInput label="No-show 率" value={params.rNs} onChange={(v) => update("rNs", v)} />
-              <PercentInput label="全流程 MD 投初诊比例" value={params.sInit} onChange={(v) => update("sInit", v)} />
+              <NumberInput label="fu 频率" value={params.fuRate} onChange={(v) => update("fuRate", v)} unit="次/周/人" step={0.05} min={0} />
+              <PercentInput label="No-show 率" value={params.noShowRate} onChange={(v) => update("noShowRate", v)} />
             </div>
           </Section>
 
-          <Section title="F · 冗余 & Lead Time">
+          <Section title="F · 冗余 / Lead / Panel 限制">
             <div className="grid grid-cols-3 gap-3">
-              <PercentInput label="MD 冗余" value={params.bufferMD} onChange={(v) => update("bufferMD", v)} />
-              <PercentInput label="NP 冗余" value={params.bufferNP} onChange={(v) => update("bufferNP", v)} />
+              <PercentInput label="冗余" value={params.buffer} onChange={(v) => update("buffer", v)} />
               <PercentInput label="利用率" value={params.utilization} onChange={(v) => update("utilization", v)} />
-              <NumberInput label="MD Lead Time" value={params.leadMD} onChange={(v) => update("leadMD", v)} unit="周" min={1} />
-              <NumberInput label="NP Lead Time" value={params.leadNP} onChange={(v) => update("leadNP", v)} unit="周" min={1} />
+              <NumberInput label="MD Lead" value={params.leadMD} onChange={(v) => update("leadMD", v)} unit="w" min={1} />
+              <NumberInput label="Tit Lead" value={params.leadTit} onChange={(v) => update("leadTit", v)} unit="w" min={1} />
+              <NumberInput label="Panel 上限" value={params.panelLimit} onChange={(v) => update("panelLimit", v)} unit="人" min={1} />
+              <NumberInput label="Panel 预警" value={params.panelWarn} onChange={(v) => update("panelWarn", v)} unit="人" min={1} />
             </div>
           </Section>
         </aside>
 
         {/* ===== 右：平衡表 ===== */}
         <main className="space-y-4 lg:col-span-3">
-          {/* Coverage 表（与 Excel MVP 对齐） */}
+          {/* 总览 */}
           <div className="rounded-xl border border-[#f0eeea] bg-white p-5">
-            <h2 className="text-sm font-semibold text-gray-900">Coverage 指标</h2>
-            <p className="mt-0.5 text-[11px] text-gray-500">
-              Coverage = 容量 / 需求；≥ 1+冗余 充裕 / ≥ 1 紧张 / &lt; 1 不够
-            </p>
-            <table className="mt-3 w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#f0eeea] text-left text-[11px] uppercase tracking-wide text-gray-400">
-                  <th className="py-2">Metric</th>
-                  <th className="py-2 text-right">Value</th>
-                  <th className="py-2 pl-4">Status</th>
-                  <th className="py-2 pl-4">含义</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#f5f3ef]">
-                <tr>
-                  <td className="py-2 text-gray-700">MD Coverage（{b.W_MD}w）</td>
-                  <td className="py-2 text-right font-medium tabular-nums">{fmtNum(b.coverageMD, 2)}</td>
-                  <td className="py-2 pl-4"><StatusPill status={b.statusMD} /></td>
-                  <td className="py-2 pl-4 text-[11px] text-gray-500">MD 初诊容量 ÷ 初诊需求</td>
-                </tr>
-                <tr>
-                  <td className="py-2 text-gray-700">Non-Init Coverage（{b.W_NP}w）</td>
-                  <td className="py-2 text-right font-medium tabular-nums">{fmtNum(b.coverageNI, 2)}</td>
-                  <td className="py-2 pl-4"><StatusPill status={b.statusNI} /></td>
-                  <td className="py-2 pl-4 text-[11px] text-gray-500">复诊+维持容量 ÷ 复诊+维持需求</td>
-                </tr>
-                <tr>
-                  <td className="py-2 text-gray-700">MD Gap Hours</td>
-                  <td className={`py-2 text-right font-medium tabular-nums ${b.gapMDMin > 0 ? "text-red-700" : "text-emerald-700"}`}>
-                    {b.gapMDMin > 0 ? "−" : "+"}{fmtHours(Math.abs(b.gapMDMin))}
-                  </td>
-                  <td className="py-2 pl-4 text-[11px] text-gray-500">{b.gapMDMin > 0 ? "缺口" : "余量"}</td>
-                  <td className="py-2 pl-4 text-[11px] text-gray-500">含 {Math.round(params.bufferMD * 100)}% 冗余</td>
-                </tr>
-                <tr>
-                  <td className="py-2 text-gray-700">Non-Init Gap Hours</td>
-                  <td className={`py-2 text-right font-medium tabular-nums ${b.gapNIMin > 0 ? "text-red-700" : "text-emerald-700"}`}>
-                    {b.gapNIMin > 0 ? "−" : "+"}{fmtHours(Math.abs(b.gapNIMin))}
-                  </td>
-                  <td className="py-2 pl-4 text-[11px] text-gray-500">{b.gapNIMin > 0 ? "缺口" : "余量"}</td>
-                  <td className="py-2 pl-4 text-[11px] text-gray-500">含 {Math.round(params.bufferNP * 100)}% 冗余</td>
-                </tr>
-                <tr>
-                  <td className="py-2 text-gray-700">建议招 MD</td>
-                  <td className="py-2 text-right font-medium tabular-nums">{b.hiresMD} 人</td>
-                  <td className="py-2 pl-4"></td>
-                  <td className="py-2 pl-4 text-[11px] text-gray-500">按 25h/周 折算</td>
-                </tr>
-                <tr>
-                  <td className="py-2 text-gray-700">建议招 NP</td>
-                  <td className="py-2 text-right font-medium tabular-nums">{b.hiresNP} 人</td>
-                  <td className="py-2 pl-4"></td>
-                  <td className="py-2 pl-4 text-[11px] text-gray-500">首选；或招全流程 MD</td>
-                </tr>
-              </tbody>
-            </table>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">本周可接新患者数</h2>
+                <div className="mt-2 flex items-baseline gap-3">
+                  <span className="text-3xl font-semibold tabular-nums text-gray-900">
+                    {fmt0(b.totalCap)}
+                  </span>
+                  <span className="text-sm text-gray-500">人/周</span>
+                  <StatusPill status={b.status} />
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[11px] uppercase tracking-wide text-gray-500">预期周新预约</div>
+                <div className="mt-1 text-xl font-semibold tabular-nums text-gray-900">
+                  {fmt0(b.weeklyExpected)}
+                </div>
+                <div className="mt-1 text-[11px] text-gray-500">
+                  Coverage <span className="font-semibold tabular-nums text-gray-900">{fmt1(b.coverage * 100)}%</span>
+                </div>
+              </div>
+            </div>
+
+            {(b.hireMD > 0 || b.hireTit > 0) && (
+              <div className="mt-4 rounded-md bg-red-50 px-3 py-2 text-[12px] text-red-700">
+                建议立即招：
+                {b.hireMD > 0 && <strong className="mx-1">{b.hireMD} 名 MD</strong>}
+                {b.hireMD > 0 && b.hireTit > 0 && "+"}
+                {b.hireTit > 0 && <strong className="mx-1">{b.hireTit} 名 Titration Team</strong>}
+              </div>
+            )}
           </div>
 
-          {/* MD 初诊线 balance sheet */}
-          <BalanceTable
-            title={`MD 初诊线 · 未来 ${b.W_MD} 周`}
-            buffer={params.bufferMD}
-            demandRows={[
-              { label: "新患者首诊", min: b.D_init_total, dur: params.tauInit },
+          {/* Bucket A */}
+          <BucketTable
+            title="Bucket A · 全流程 MD"
+            buffer={params.buffer}
+            rows={[
+              ["人员", `${params.nFullFlowMD} 人`],
+              ["总有效工时", `${fmt1(b.bucketA.totalHours)} h/周`],
+              [`维持现有 panel（${params.panelFullFlow} × ${params.fuRate} × ${params.tauFu / 60} h）`, `${fmt1(b.bucketA.existingHours)} h/周`],
+              ["剩余可分配", `${fmt1(b.bucketA.freeHours)} h/周`],
+              [`每个新患者消耗（${params.tauInit / 60} + ${params.tauDrug / 60} h）`, `${fmt1((params.tauInit + params.tauDrug) / 60)} h`],
             ]}
-            supplyRows={[
-              { label: "仅初诊 MD", min: b.C_mdInitOnly_init, dur: params.tauInit },
-              { label: `全流程 MD × ${Math.round(params.sInit * 100)}% 投初诊`, min: b.C_mdFullFlow_init, dur: params.tauInit },
-            ]}
-            status={b.statusMD}
-            coverage={b.coverageMD}
-            gapMin={b.gapMDMin}
+            output={["NewCap_full", `${fmt0(b.bucketA.newCap)} 人/周`]}
           />
 
-          {/* 非初诊线 balance sheet */}
-          <BalanceTable
-            title={`非初诊线（复诊 + 维持）· 未来 ${b.W_NP} 周`}
-            buffer={params.bufferNP}
-            demandRows={[
-              { label: `复诊（${params.inFollowup} 人 ÷ ${params.iDrug} 周）`, min: b.D_drug_total, dur: params.tauDrug },
-              { label: `维持（${params.inMaintenance} 人 ÷ ${params.iFu} 周）`, min: b.D_fu_total, dur: params.tauFu },
+          {/* Bucket B */}
+          <BucketTable
+            title="Bucket B · 纯诊断 MD + Titration Team"
+            buffer={params.buffer}
+            rows={[
+              ["纯诊断 MD 工时", `${fmt1(b.bucketB.pureDxHours)} h/周`],
+              [`可做诊断数 (÷ ${params.tauInit / 60} h)`, `DxCap = ${fmt0(b.bucketB.dxCap)} 人/周`],
+              ["Titration Team 工时", `${fmt1(b.bucketB.titHours)} h/周`],
+              [`维持现有 panel（${params.panelTitration} × ${params.fuRate} × ${params.tauFu / 60} h）`, `${fmt1(b.bucketB.titExistingHours)} h/周`],
+              ["Titration 剩余可分配", `${fmt1(b.bucketB.titFreeHours)} h/周`],
+              [`可做 drug init 数 (÷ ${params.tauDrug / 60} h)`, `TitCap = ${fmt0(b.bucketB.titCap)} 人/周`],
             ]}
-            supplyRows={[
-              { label: `全流程 MD × ${Math.round((1 - params.sInit) * 100)}% 投非初诊`, min: b.C_mdFullFlow_ni, dur: params.tauDrug },
-              { label: "NP", min: b.C_np_ni, dur: params.tauDrug },
+            output={[
+              `Bucket B 上限 = min(DxCap, TitCap) | ${bottleneckLabel(b.bucketB.bottleneck)}`,
+              `${fmt0(b.bucketB.bucketTotal)} 人/周`,
             ]}
-            status={b.statusNI}
-            coverage={b.coverageNI}
-            gapMin={b.gapNIMin}
           />
+
+          {/* 合计 */}
+          <div className="rounded-xl border border-[#f0eeea] bg-white p-5">
+            <h3 className="text-sm font-semibold text-gray-900">全院新患者周容量</h3>
+            <div className="mt-3 rounded-md bg-gray-50 px-3 py-3 font-mono text-[13px] text-gray-800">
+              {fmt0(b.bucketA.newCap)} (Bucket A) + {fmt0(b.bucketB.bucketTotal)} (Bucket B) ={" "}
+              <strong className="text-gray-900">{fmt0(b.totalCap)}</strong> 人/周
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-[#f0eeea] pt-3 text-[12px]">
+              <Row label="预期周新预约">{fmt0(b.weeklyExpected)} 人</Row>
+              <Row label="Coverage">{fmt1(b.coverage * 100)}%</Row>
+              <Row label={`安全线（含 ${Math.round(params.buffer * 100)}% 冗余）`}>
+                {fmt0(b.weeklyExpected * (1 + params.buffer))} 人
+              </Row>
+              <Row label="缺口">
+                {b.gapPerWeek > 0 ? (
+                  <span className="text-red-700">−{fmt0(b.gapPerWeek)} 人/周</span>
+                ) : (
+                  <span className="text-emerald-700">+{fmt0(b.totalCap - b.weeklyExpected * (1 + params.buffer))} 人/周</span>
+                )}
+              </Row>
+            </div>
+          </div>
+
+          {/* Panel 状态 */}
+          <div className="rounded-xl border border-[#f0eeea] bg-white p-5">
+            <h3 className="text-sm font-semibold text-gray-900">Panel 占用</h3>
+            <div className="mt-2 space-y-2 text-[12px]">
+              <Row label="全流程 MD 平均 panel/人">
+                {fmt0(b.fullFlowPerMD)} 人
+              </Row>
+              <Row label="状态">
+                {b.atLimit ? (
+                  <span className="text-red-700">🔴 超上限 ({params.panelLimit})——应关 new patient toggle</span>
+                ) : b.atWarn ? (
+                  <span className="text-amber-700">🟡 接近上限（{params.panelWarn}+）</span>
+                ) : (
+                  <span className="text-emerald-700">🟢 充裕</span>
+                )}
+              </Row>
+            </div>
+          </div>
 
           <p className="px-1 text-[11px] text-gray-400">
             所有数字在左侧改任一参数会实时重算。"保存"后下次打开还在（仅本浏览器）。
             <br />
-            诊次时长不同的项混在一起时，"诊次"列按各自时长换算；分钟列是真实分钟。
+            想看公式见下方"公式说明"，更详细的业务规则去 <a className="underline" href="/rules">规则说明</a> 页。
           </p>
 
-          {/* 公式说明 */}
           <FormulaSection />
         </main>
       </div>
@@ -593,7 +629,59 @@ export default function BalanceSheetPage() {
 }
 
 // ============================================================
-// 公式说明（可折叠）
+// 子组件
+// ============================================================
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-[11px] text-gray-500">{label}</span>
+      <span className="font-medium tabular-nums text-gray-900">{children}</span>
+    </div>
+  );
+}
+
+interface BucketTableProps {
+  title: string;
+  buffer: number;
+  rows: [string, string][];
+  output: [string, string];
+}
+
+function BucketTable({ title, rows, output }: BucketTableProps) {
+  return (
+    <div className="rounded-xl border border-[#f0eeea] bg-white p-5">
+      <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+      <table className="mt-3 w-full text-sm">
+        <tbody className="divide-y divide-[#f5f3ef]">
+          {rows.map(([label, value]) => (
+            <tr key={label}>
+              <td className="py-1.5 text-[12px] text-gray-600">{label}</td>
+              <td className="py-1.5 text-right text-[12px] font-medium tabular-nums text-gray-900">
+                {value}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t-2 border-gray-300">
+            <th className="py-2 text-left text-[11.5px] font-semibold text-gray-800">{output[0]}</th>
+            <th className="py-2 text-right text-sm font-semibold tabular-nums text-gray-900">{output[1]}</th>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+function bottleneckLabel(b: "diagnosis" | "titration" | "balanced"): string {
+  if (b === "diagnosis") return "诊断为瓶颈";
+  if (b === "titration") return "Titration 为瓶颈";
+  return "两端平衡";
+}
+
+// ============================================================
+// 公式说明
 // ============================================================
 
 function FormulaSection() {
@@ -601,101 +689,60 @@ function FormulaSection() {
     <details className="group rounded-xl border border-[#f0eeea] bg-white">
       <summary className="flex cursor-pointer list-none items-center justify-between p-5 hover:bg-gray-50">
         <div>
-          <h3 className="text-sm font-semibold text-gray-900">公式说明</h3>
-          <p className="mt-0.5 text-[11px] text-gray-500">
-            所有数字怎么来的——可逐项核对到原始参数
-          </p>
+          <h3 className="text-sm font-semibold text-gray-900">公式说明（PDF MVP 4 步逻辑）</h3>
+          <p className="mt-0.5 text-[11px] text-gray-500">所有数字怎么来的——逐项对到原始参数</p>
         </div>
         <span className="text-gray-400 transition-transform group-open:rotate-90">›</span>
       </summary>
-      <div className="space-y-5 border-t border-[#f0eeea] p-5 text-[12px]">
+      <div className="space-y-4 border-t border-[#f0eeea] p-5 text-[12px]">
+        <FB title="① 单人每周可看病小时数">
+          <Code>{`H = h_周工时 × u           （默认 25 × 0.85 = 21.25 h/周）`}</Code>
+        </FB>
+        <FB title="② Bucket A · 全流程 MD">
+          <Code>{`Step 1  现有 panel 维持小时数
+        D_full_existing = Pnl_full × fu_rate × τ_fu
 
-        {/* 符号 */}
-        <FormulaBlock title="① 参数符号 → 含义">
-          <SymTable rows={[
-            ["n_MD仅初诊 / n_MD全流程 / n_NP", "三类人头数"],
-            ["h_MD / h_NP", "周有效工时（已扣非临床）"],
-            ["u", "利用率（默认 85%）"],
-            ["τ_init / τ_drug / τ_fu", "初诊 / 复诊 / 维持时长（min）"],
-            ["I_drug / I_fu", "复诊 / 维持的复诊间隔（周）"],
-            ["s_init", "全流程 MD 投在初诊的时间占比"],
-            ["P_复诊 / P_维持", "当前在册的两类病人人数"],
-            ["B_w", "第 w 周新预约首诊数"],
-            ["r_ns", "no-show 率"],
-            ["β_MD / β_NP", "MD / NP 冗余 %"],
-            ["W_MD / W_NP", "前瞻窗口（= 各自 lead time）"],
-          ]} />
-        </FormulaBlock>
+Step 2  剩余可分配小时数
+        Free_full = (n_full × H_MD) − D_full_existing
 
-        {/* 单人 */}
-        <FormulaBlock title="② 单人每周可看病分钟数">
-          <Code>{`E_MD = h_MD × 60 × u
-E_NP = h_NP × 60 × u`}</Code>
-          <p className="mt-2 text-[11px] text-gray-500">
-            默认 25 × 60 × 0.85 = <strong>1275 min / 周 / 人</strong>
-          </p>
-        </FormulaBlock>
+Step 3  可接新患者数（每个新患者 = 0.75 + 0.5 = 1.25 h）
+        NewCap_full = max(0, Free_full) / 1.25`}</Code>
+        </FB>
+        <FB title="③ Bucket B · 纯诊断 MD + Titration Team">
+          <Code>{`Step 1  Titration 维持现有 panel
+        D_tit_existing = Pnl_tit × fu_rate × τ_fu
 
-        {/* 产能 */}
-        <FormulaBlock title="③ 产能（每周分钟数）">
-          <p className="text-[11px] text-gray-500">初诊容量（只能 MD 做）：</p>
-          <Code>{`C_init = n_MD仅初诊 × E_MD  +  n_MD全流程 × E_MD × s_init`}</Code>
+Step 2  纯诊断 MD 可做诊断数
+        DxCap = (n_pure × H_MD) / τ_init        （τ_init = 0.75 h）
 
-          <p className="mt-3 text-[11px] text-gray-500">非初诊容量（复诊 + 维持合并，MD 全流程 + 全部 NP）：</p>
-          <Code>{`C_ni  = n_MD全流程 × E_MD × (1 − s_init)  +  n_NP × E_NP`}</Code>
-        </FormulaBlock>
+Step 3  Titration 可做 drug init 数
+        Free_tit = max(0, (n_tit × H_Tit) − D_tit_existing)
+        TitCap   = Free_tit / τ_drug             （τ_drug = 0.5 h）
 
-        {/* 需求 */}
-        <FormulaBlock title="④ 需求（每周分钟数）">
-          <p className="text-[11px] text-gray-500">初诊需求（来自新预约）：</p>
-          <Code>{`D_init(w) = B_w × (1 − r_ns) × τ_init`}</Code>
-          <p className="mt-1 text-[11px] text-gray-500">
-            前瞻窗口内累计：<code>D_init_total = Σ_{`{w=1..W_MD}`} D_init(w)</code><br/>
-            超过 4 周的部分用已知 4 周的平均外推。
-          </p>
+Step 4  桶上限（任一不够都做不成）
+        NewCap_B = min(DxCap, TitCap)`}</Code>
+        </FB>
+        <FB title="④ 全院新患者周容量">
+          <Code>{`NewCap_total = NewCap_full + NewCap_B`}</Code>
+        </FB>
+        <FB title="⑤ Coverage 与判断">
+          <Code>{`Coverage = NewCap_total / 预期周新预约
+≥ 1 + buffer  → ✅ 充裕
+≥ 1           → ⚠️ 紧张
+< 1           → 🔴 不够`}</Code>
+        </FB>
+        <FB title="⑥ 缺口 → 建议招人数">
+          <Code>{`Gap = max(0, 预期周新预约 × (1 + buffer) − NewCap_total)
 
-          <p className="mt-3 text-[11px] text-gray-500">非初诊需求（稳态假设：池子在窗口内不变）：</p>
-          <Code>{`D_ni_per_week = (P_复诊 / I_drug) × τ_drug
-              + (P_维持 / I_fu) × τ_fu`}</Code>
-          <p className="mt-1 text-[11px] text-gray-500">
-            <code>P / I</code> 是把"池子总人数"换算成"每周诊次"——例：280 人每 2 周看 1 次，则每周来 140 个。<br/>
-            前瞻窗口内累计：<code>D_ni_total = D_ni_per_week × W_NP</code>
-          </p>
-        </FormulaBlock>
-
-        {/* Coverage */}
-        <FormulaBlock title="⑤ Coverage（覆盖率）">
-          <Code>{`Coverage_MD = (C_init × W_MD) / D_init_total
-Coverage_NI = (C_ni  × W_NP) / D_ni_total`}</Code>
-          <p className="mt-2 text-[11px] text-gray-500">
-            阈值：≥ <strong>1 + β</strong> 充裕 ｜ ≥ 1 紧张 ｜ &lt; 1 不够
-          </p>
-        </FormulaBlock>
-
-        {/* Gap */}
-        <FormulaBlock title="⑥ 缺口（Gap）">
-          <Code>{`Gap_MD_min = D_init_total × (1 + β_MD) − C_init × W_MD
-Gap_NI_min = D_ni_total  × (1 + β_NP) − C_ni  × W_NP`}</Code>
-          <p className="mt-2 text-[11px] text-gray-500">
-            正数 = 不够；负数 = 余量。Gap Hours = Gap_min ÷ 60。
-          </p>
-        </FormulaBlock>
-
-        {/* Hire */}
-        <FormulaBlock title="⑦ 建议招聘人数">
-          <Code>{`E_new = 25 × 60 × u                  （典型新员工，25 h/周）
-hires = ⌈ Gap_min / (E_new × W) ⌉`}</Code>
-          <p className="mt-2 text-[11px] text-gray-500">
-            分别按 MD / NP 算各自的 hires。Gap ≤ 0 时为 0。
-          </p>
-        </FormulaBlock>
-
+若 Titration 瓶颈：hires_Tit = ⌈Gap / (h_new × u / τ_drug)⌉
+否则：           hires_MD  = ⌈Gap / (h_new × u / (τ_init + τ_drug))⌉`}</Code>
+        </FB>
       </div>
     </details>
   );
 }
 
-function FormulaBlock({ title, children }: { title: string; children: React.ReactNode }) {
+function FB({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
       <h4 className="mb-1.5 text-[12px] font-medium text-gray-800">{title}</h4>
@@ -706,121 +753,8 @@ function FormulaBlock({ title, children }: { title: string; children: React.Reac
 
 function Code({ children }: { children: React.ReactNode }) {
   return (
-    <pre className="mt-1 overflow-x-auto rounded-md bg-gray-50 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-gray-800">
+    <pre className="overflow-x-auto rounded-md bg-gray-50 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-gray-800">
       {children}
     </pre>
-  );
-}
-
-function SymTable({ rows }: { rows: [string, string][] }) {
-  return (
-    <table className="w-full text-[11.5px]">
-      <tbody className="divide-y divide-[#f5f3ef]">
-        {rows.map(([sym, meaning]) => (
-          <tr key={sym}>
-            <td className="py-1 pr-3 align-top font-mono text-gray-800">{sym}</td>
-            <td className="py-1 text-gray-600">{meaning}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-// ============================================================
-// 平衡表小表
-// ============================================================
-
-interface BalanceTableProps {
-  title: string;
-  buffer: number;
-  demandRows: { label: string; min: number; dur: number }[];
-  supplyRows: { label: string; min: number; dur: number }[];
-  status: Status;
-  coverage: number;
-  gapMin: number;
-}
-
-function BalanceTable({
-  title,
-  buffer,
-  demandRows,
-  supplyRows,
-  status,
-  coverage,
-  gapMin,
-}: BalanceTableProps) {
-  const demandSum = demandRows.reduce((a, r) => a + r.min, 0);
-  const supplySum = supplyRows.reduce((a, r) => a + r.min, 0);
-  const demandWithBuffer = demandSum * (1 + buffer);
-
-  return (
-    <div className="rounded-xl border border-[#f0eeea] bg-white p-5">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
-        <StatusPill status={status} />
-      </div>
-      <table className="mt-3 w-full text-sm">
-        <thead>
-          <tr className="border-b border-[#f0eeea] text-left text-[11px] uppercase tracking-wide text-gray-400">
-            <th className="py-2 w-1/2">项目</th>
-            <th className="py-2 text-right">诊次</th>
-            <th className="py-2 text-right">分钟</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td colSpan={3} className="pt-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-gray-500">需求侧</td>
-          </tr>
-          {demandRows.map((r) => (
-            <tr key={r.label} className="text-gray-700">
-              <td className="py-1.5 pl-2">{r.label}</td>
-              <td className="py-1.5 text-right tabular-nums">{fmtNum(fmtSessions(r.min, r.dur))}</td>
-              <td className="py-1.5 text-right tabular-nums text-gray-500">{fmtNum(r.min)}</td>
-            </tr>
-          ))}
-          <tr className="border-t border-[#f5f3ef] font-medium">
-            <td className="py-1.5 pl-2">合计</td>
-            <td className="py-1.5 text-right tabular-nums">—</td>
-            <td className="py-1.5 text-right tabular-nums">{fmtNum(demandSum)}</td>
-          </tr>
-          <tr className="text-[11px] text-gray-500">
-            <td className="py-1 pl-2">含 {Math.round(buffer * 100)}% 冗余的应配产能</td>
-            <td className="py-1 text-right tabular-nums">—</td>
-            <td className="py-1 text-right tabular-nums">{fmtNum(demandWithBuffer)}</td>
-          </tr>
-
-          <tr>
-            <td colSpan={3} className="pt-4 pb-1 text-[11px] font-medium uppercase tracking-wide text-gray-500">供给侧</td>
-          </tr>
-          {supplyRows.map((r) => (
-            <tr key={r.label} className="text-gray-700">
-              <td className="py-1.5 pl-2">{r.label}</td>
-              <td className="py-1.5 text-right tabular-nums">{fmtNum(fmtSessions(r.min, r.dur))}</td>
-              <td className="py-1.5 text-right tabular-nums text-gray-500">{fmtNum(r.min)}</td>
-            </tr>
-          ))}
-          <tr className="border-t border-[#f5f3ef] font-medium">
-            <td className="py-1.5 pl-2">合计</td>
-            <td className="py-1.5 text-right tabular-nums">—</td>
-            <td className="py-1.5 text-right tabular-nums">{fmtNum(supplySum)}</td>
-          </tr>
-
-          <tr>
-            <td colSpan={3} className="pt-4 pb-1 text-[11px] font-medium uppercase tracking-wide text-gray-500">平衡</td>
-          </tr>
-          <tr>
-            <td className="py-1.5 pl-2 text-gray-700">Coverage</td>
-            <td colSpan={2} className="py-1.5 text-right tabular-nums font-medium">{fmtNum(coverage, 2)}</td>
-          </tr>
-          <tr>
-            <td className="py-1.5 pl-2 text-gray-700">缺口 / 余量</td>
-            <td colSpan={2} className={`py-1.5 text-right tabular-nums font-medium ${gapMin > 0 ? "text-red-700" : "text-emerald-700"}`}>
-              {gapMin > 0 ? "−" : "+"}{fmtNum(Math.abs(gapMin))} 分钟（{gapMin > 0 ? "−" : "+"}{fmtHours(Math.abs(gapMin))} 小时）
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
   );
 }

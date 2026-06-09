@@ -4,283 +4,197 @@ import type {
   DashboardDecision,
   HistoryData,
   MdStaff,
-  NpStaff,
-  RoleDecision,
+  NewPatientCapacity,
+  PatientsData,
   StaffData,
   Status,
+  TitrationStaff,
   WeekPoint,
 } from "./types";
 
-// 单人每周"可用于看病的有效分钟数"
-function effectiveMinPerWeek(
-  weeklyHours: number,
-  availability: number,
-  utilization: number,
-): number {
-  return weeklyHours * 60 * availability * utilization;
+// ============================================================
+// 基础：把 staff list 折算成"周可用小时"
+// ============================================================
+
+function effectiveHoursMD(mds: MdStaff[], subtype: MdStaff["subtype"], u: number): number {
+  return mds
+    .filter((m) => m.subtype === subtype)
+    .reduce((acc, m) => acc + m.weeklyHours * u, 0);
 }
 
-function sumEffectiveMin(
-  people: Array<MdStaff | NpStaff>,
-  utilization: number,
-): number {
-  return people.reduce(
-    (acc, p) => acc + effectiveMinPerWeek(p.weeklyHours, p.availability, utilization),
-    0,
-  );
+function effectiveHoursTitration(team: TitrationStaff[], u: number): number {
+  return team.reduce((acc, t) => acc + t.weeklyHours * u, 0);
 }
 
-// ===== 产能（每周分钟） =====
+// ============================================================
+// 核心：本周可接新患者数（按 PDF 4 步逻辑）
+// ============================================================
 
-export function mdInitialCapacityMinPerWeek(staff: MdStaff[], c: Constants): number {
+export function computeNewPatientCapacity(
+  staff: StaffData,
+  patients: PatientsData,
+  c: Constants,
+): NewPatientCapacity {
   const u = c.effectiveUtilization;
-  const initOnly = staff.filter((m) => m.subtype === "initial_only");
-  const fullFlow = staff.filter((m) => m.subtype === "full_flow");
-  return (
-    sumEffectiveMin(initOnly, u) +
-    sumEffectiveMin(fullFlow, u) * c.fullFlowMdSplit.initialPct
-  );
+  const tauInit = c.appointmentMinutes.initial / 60;   // 0.75
+  const tauDrug = c.appointmentMinutes.drug / 60;      // 0.5
+  const tauFu = c.appointmentMinutes.fu / 60;          // 0.25
+  const onboardingTime = tauInit + tauDrug;            // 1.25 hr/new patient (全流程桶)
+
+  // ===== Bucket A: 全流程 MD =====
+  const hoursA = effectiveHoursMD(staff.md, "full_flow", u);
+  const existingA = patients.panelFullFlow * c.fuRate * tauFu;
+  const freeA = hoursA - existingA;
+  const newCapA = Math.max(0, freeA) / onboardingTime;
+  const nFullFlow = staff.md.filter((m) => m.subtype === "full_flow").length;
+
+  // ===== Bucket B: 纯诊断 MD + Titration Team =====
+  const hoursPureDx = effectiveHoursMD(staff.md, "pure_dx", u);
+  const dxCap = hoursPureDx / tauInit;
+  const nPureDx = staff.md.filter((m) => m.subtype === "pure_dx").length;
+
+  const hoursTit = effectiveHoursTitration(staff.titrationTeam, u);
+  const existingTit = patients.panelTitration * c.fuRate * tauFu;
+  const freeTit = Math.max(0, hoursTit - existingTit);
+  const titCap = freeTit / tauDrug;
+  const nTitration = staff.titrationTeam.length;
+
+  const bucketBTotal = Math.min(dxCap, titCap);
+  const bottleneck: "diagnosis" | "titration" | "balanced" =
+    Math.abs(dxCap - titCap) < 0.5
+      ? "balanced"
+      : dxCap < titCap
+      ? "diagnosis"
+      : "titration";
+
+  return {
+    total: newCapA + bucketBTotal,
+    bucketA: {
+      nFullFlow,
+      totalHours: hoursA,
+      existingPanelHours: existingA,
+      freeHours: freeA,
+      newCapacity: newCapA,
+    },
+    bucketB: {
+      nPureDx,
+      pureDxHours: hoursPureDx,
+      pureDxCapacity: dxCap,
+      nTitration,
+      titrationHours: hoursTit,
+      titrationExistingHours: existingTit,
+      titrationFreeHours: freeTit,
+      titrationCapacity: titCap,
+      bottleneck,
+      bucketTotal: bucketBTotal,
+    },
+  };
 }
 
-/**
- * 复诊 + 维持的合并产能 = 全流程 MD 的非初诊时间 + 所有 NP 时间。
- * 全流程 MD 才会承担复诊/维持，仅初诊 MD 不参与。
- */
-export function nonInitialCapacityMinPerWeek(
-  md: MdStaff[],
-  np: NpStaff[],
-  c: Constants,
-): number {
-  const u = c.effectiveUtilization;
-  const fullFlow = md.filter((m) => m.subtype === "full_flow");
-  return (
-    sumEffectiveMin(fullFlow, u) * c.fullFlowMdSplit.nonInitialPct +
-    sumEffectiveMin(np, u)
-  );
-}
+// ============================================================
+// 状态判断 + 招聘建议
+// ============================================================
 
-// ===== 需求（每周分钟） =====
-
-export function initialDemandMinForWeek(
-  expectedBookings: number,
-  noShowRate: number,
-  c: Constants,
-): number {
-  const showRate = 1 - noShowRate;
-  return expectedBookings * showRate * c.appointmentMinutes.initial;
-}
-
-/**
- * 复诊 + 维持的合并需求（分钟/周）。
- * - 复诊：每位病人按 followup.weeksBetweenVisits 看 1 次
- * - 维持：每位病人按 maintenance.weeksBetweenVisits 看 1 次
- */
-export function nonInitialDemandMinPerWeek(
-  inFollowup: number,
-  inMaintenance: number,
-  c: Constants,
-): number {
-  const followupVisitsPerWeek = inFollowup / c.followup.weeksBetweenVisits;
-  const maintenanceVisitsPerWeek = inMaintenance / c.maintenance.weeksBetweenVisits;
-  return (
-    followupVisitsPerWeek * c.appointmentMinutes.followup +
-    maintenanceVisitsPerWeek * c.appointmentMinutes.maintenance
-  );
-}
-
-// ===== 状态判断 =====
-
-function statusFromGap(capacity: number, demand: number, buffer: number): Status {
-  if (capacity >= demand * (1 + buffer)) return "ok";
-  if (capacity >= demand) return "tight";
+function statusFromCoverage(coverage: number, buffer: number): Status {
+  if (coverage >= 1 + buffer) return "ok";
+  if (coverage >= 1) return "tight";
   return "short";
 }
 
-// 按"典型新员工"折算还差几个人
-function additionalHiresNeeded(
-  shortageMinTotal: number,
-  weeks: number,
-  c: Constants,
-  fractionUsedForThisDemand: number,
-): number {
-  if (shortageMinTotal <= 0) return 0;
-  const perHirePerWeek =
-    effectiveMinPerWeek(
-      c.typicalNewHire.weeklyHours,
-      c.typicalNewHire.availability,
-      c.effectiveUtilization,
-    ) * fractionUsedForThisDemand;
-  const perHireTotal = perHirePerWeek * weeks;
-  return Math.ceil(shortageMinTotal / perHireTotal);
+function avgBooking(arr: { expected: number }[]): number {
+  if (arr.length === 0) return 0;
+  return arr.reduce((a, b) => a + b.expected, 0) / arr.length;
 }
-
-// ===== 主计算 =====
 
 export function computeDecision(data: AllData): DashboardDecision {
   const { staff, patients, demand, constants: c } = data;
 
-  // ---- MD 初诊检查（看未来 c.lookaheadWeeks.md 周） ----
-  const mdWeeks = c.lookaheadWeeks.md;
-  const mdCapPerWeek = mdInitialCapacityMinPerWeek(staff.md, c);
-  const mdWeekly: WeekPoint[] = demand.newInitialBookings.slice(0, mdWeeks).map((w) => {
-    const demandMin = initialDemandMinForWeek(w.expected, demand.noShowRate, c);
-    const demandSessions = demandMin / c.appointmentMinutes.initial;
-    const capacitySessions = mdCapPerWeek / c.appointmentMinutes.initial;
-    const safeCapacitySessions = capacitySessions / (1 + c.buffer.md);
-    return {
-      weekStart: w.weekStart,
-      demand: round1(demandSessions),
-      capacity: round1(capacitySessions),
-      safeCapacity: round1(safeCapacitySessions),
-    };
-  });
-  const mdTotalDemandMin = mdWeekly.reduce(
-    (acc, w) => acc + w.demand * c.appointmentMinutes.initial,
-    0,
-  );
-  const mdTotalCapacityMin = mdCapPerWeek * mdWeeks;
-  const mdStatus = mdWeekly
-    .map((w) => statusFromGap(w.capacity, w.demand, c.buffer.md))
-    .reduce(worstStatus, "ok");
-  const mdShortageMin = Math.max(0, mdTotalDemandMin * (1 + c.buffer.md) - mdTotalCapacityMin);
-  const mdHire = additionalHiresNeeded(mdShortageMin, mdWeeks, c, 1.0);
+  const capacity = computeNewPatientCapacity(staff, patients, c);
 
-  const mdDecision: RoleDecision = {
-    role: "md_initial",
-    label: "初诊 MD 产能（未来 4 周）",
-    lookaheadWeeks: mdWeeks,
-    leadTimeWeeks: c.leadTimeWeeks.md,
-    status: mdStatus,
-    recommendation: recommendationText(mdStatus, mdHire, "MD（可只做初诊）", c.leadTimeWeeks.md),
-    hireSuggestion: mdHire,
-    hireSuggestionWho: "MD（可只做初诊）",
-    weekly: mdWeekly,
-    totals: {
-      capacitySessions: round1(mdTotalCapacityMin / c.appointmentMinutes.initial),
-      demandSessions: round1(mdTotalDemandMin / c.appointmentMinutes.initial),
-      safeCapacitySessions: round1(
-        (mdTotalCapacityMin / (1 + c.buffer.md)) / c.appointmentMinutes.initial,
-      ),
-    },
-  };
-
-  // ---- 复诊 + 维持合并检查（看未来 c.lookaheadWeeks.np 周） ----
-  const niWeeks = c.lookaheadWeeks.np;
-  const niCapPerWeek = nonInitialCapacityMinPerWeek(staff.md, staff.np, c);
-  const niDemandMinPerWeek = nonInitialDemandMinPerWeek(
-    patients.inFollowup,
-    patients.inMaintenance,
-    c,
-  );
-  // 平均"非初诊"诊次时长（用于把分钟换成"诊次"显示）
-  const avgNonInitialMin = avgNonInitialMinutes(
-    patients.inFollowup,
-    patients.inMaintenance,
-    c,
-  );
-
-  const niWeekly: WeekPoint[] = [];
-  // v0 假设未来 N 周复诊/维持需求恒定（病人池变化忽略）
-  for (let i = 0; i < niWeeks; i++) {
-    const weekStart = addWeeks(demand.asOfDate, i);
-    const demandSessions = niDemandMinPerWeek / avgNonInitialMin;
-    const capacitySessions = niCapPerWeek / avgNonInitialMin;
-    const safeCapacitySessions = capacitySessions / (1 + c.buffer.np);
-    niWeekly.push({
-      weekStart,
-      demand: round1(demandSessions),
-      capacity: round1(capacitySessions),
-      safeCapacity: round1(safeCapacitySessions),
-    });
+  // 未来 W_MD 周预期新预约（含 no-show 折扣）
+  const W = c.lookaheadWeeks.md;
+  const known = demand.newInitialBookings.slice(0, W);
+  const avg = avgBooking(demand.newInitialBookings);
+  let expectedBookings = 0;
+  for (let i = 0; i < W; i++) {
+    const expectedRaw = i < known.length ? known[i].expected : avg;
+    expectedBookings += expectedRaw * (1 - demand.noShowRate);
   }
-  const niTotalDemandMin = niDemandMinPerWeek * niWeeks;
-  const niTotalCapacityMin = niCapPerWeek * niWeeks;
-  const niStatus = niWeekly
-    .map((w) => statusFromGap(w.capacity, w.demand, c.buffer.np))
-    .reduce(worstStatus, "ok");
-  const niShortageMin = Math.max(
-    0,
-    niTotalDemandMin * (1 + c.buffer.np) - niTotalCapacityMin,
-  );
-  const niHire = additionalHiresNeeded(niShortageMin, niWeeks, c, 1.0);
+  // 平均每周预期
+  const weeklyExpected = expectedBookings / W;
 
-  const niDecision: RoleDecision = {
-    role: "non_initial",
-    label: "复诊 / 维持产能（未来 2 周）",
-    lookaheadWeeks: niWeeks,
-    leadTimeWeeks: c.leadTimeWeeks.np,
-    status: niStatus,
-    recommendation: recommendationText(
-      niStatus,
-      niHire,
-      "NP（或全流程 MD）",
-      c.leadTimeWeeks.np,
-    ),
-    hireSuggestion: niHire,
-    hireSuggestionWho: "NP（或全流程 MD）",
-    weekly: niWeekly,
-    totals: {
-      capacitySessions: round1(niTotalCapacityMin / avgNonInitialMin),
-      demandSessions: round1(niTotalDemandMin / avgNonInitialMin),
-      safeCapacitySessions: round1(
-        (niTotalCapacityMin / (1 + c.buffer.np)) / avgNonInitialMin,
-      ),
-    },
+  // Coverage = 本周容量 / 平均每周预期
+  const coverage = weeklyExpected > 0 ? capacity.total / weeklyExpected : Infinity;
+  const status = statusFromCoverage(coverage, c.buffer);
+
+  // 缺口 → 招聘建议
+  const weeklyGap = Math.max(0, weeklyExpected * (1 + c.buffer) - capacity.total);
+  // 假设新招的 MD 是"全流程"，每人每周能贡献多少新患者
+  const newMDPerHire =
+    (c.typicalNewHire.weeklyHours * c.effectiveUtilization) /
+    (c.appointmentMinutes.initial / 60 + c.appointmentMinutes.drug / 60);
+  // 假设新招的 Titration Team 主要做 drug init
+  const newTitPerHire =
+    (c.typicalNewHire.weeklyHours * c.effectiveUtilization) /
+    (c.appointmentMinutes.drug / 60);
+
+  let hireMD = 0;
+  let hireTit = 0;
+  if (weeklyGap > 0) {
+    // 谁是瓶颈？看 bucketB 还是全流程，根据 bottleneck 决定优先招哪种
+    if (capacity.bucketB.bottleneck === "titration") {
+      hireTit = Math.ceil(weeklyGap / newTitPerHire);
+    } else if (capacity.bucketB.bottleneck === "diagnosis") {
+      hireMD = Math.ceil(weeklyGap / newMDPerHire);
+    } else {
+      // 平衡或全流程桶不够 → 招全流程 MD
+      hireMD = Math.ceil(weeklyGap / newMDPerHire);
+    }
+  }
+
+  // Panel 占用
+  const fullFlowPerMD =
+    capacity.bucketA.nFullFlow > 0
+      ? patients.panelFullFlow / capacity.bucketA.nFullFlow
+      : 0;
+  const panelStatus = {
+    fullFlowPerMD,
+    fullFlowAtLimit: fullFlowPerMD >= c.panelLimitPerMD,
+    fullFlowAtWarn: fullFlowPerMD >= c.panelLimitWarnAt,
   };
+
+  // 建议文案
+  let recommendation: string;
+  if (status === "ok") {
+    recommendation = `本周可接 ${Math.round(capacity.total)} 个新患者，超出预期需求（${Math.round(weeklyExpected)}）${Math.round((coverage - 1) * 100)}%。容量充裕。`;
+  } else if (status === "tight") {
+    recommendation = `本周可接 ${Math.round(capacity.total)} 个新患者，刚好覆盖预期（${Math.round(weeklyExpected)}）但已吃掉冗余。建议本周内启动招聘——${
+      capacity.bucketB.bottleneck === "titration"
+        ? `优先 Titration Team（瓶颈），lead time ${c.leadTimeWeeks.titration} 周`
+        : `优先全流程 MD 或 Titration Team`
+    }。`;
+  } else {
+    recommendation = `本周仅能接 ${Math.round(capacity.total)} 个新患者，但预期 ${Math.round(weeklyExpected)} 个。立即发 JD：${hireMD > 0 ? `建议招 ${hireMD} 名 MD` : ""}${hireMD > 0 && hireTit > 0 ? " + " : ""}${hireTit > 0 ? `${hireTit} 名 Titration Team` : ""}。`;
+  }
 
   return {
     asOfDate: demand.asOfDate,
-    md: mdDecision,
-    nonInitial: niDecision,
+    capacity,
+    expectedBookingsNext: expectedBookings,
+    status,
+    coverage,
+    recommendation,
+    hireSuggestion: { md: hireMD, titration: hireTit },
+    panelStatus,
   };
 }
 
-// ===== Helpers =====
-
-function avgNonInitialMinutes(inFu: number, inMaint: number, c: Constants): number {
-  const fuV = inFu / c.followup.weeksBetweenVisits;
-  const maintV = inMaint / c.maintenance.weeksBetweenVisits;
-  const totalV = fuV + maintV;
-  if (totalV === 0) return c.appointmentMinutes.followup; // 防 0
-  return (
-    (fuV * c.appointmentMinutes.followup +
-      maintV * c.appointmentMinutes.maintenance) /
-    totalV
-  );
-}
-
-function worstStatus(a: Status, b: Status): Status {
-  const order: Record<Status, number> = { ok: 0, tight: 1, short: 2 };
-  return order[a] >= order[b] ? a : b;
-}
-
-function recommendationText(
-  status: Status,
-  hire: number,
-  who: string,
-  leadWeeks: number,
-): string {
-  if (status === "ok") return "够用，无需招聘。";
-  if (status === "tight")
-    return `紧张：当前产能能覆盖需求，但已吃掉冗余。建议本周内启动 ${who} 的招聘流程（lead time ${leadWeeks} 周）。`;
-  return `不够：未来 ${leadWeeks} 周内将出现产能缺口，建议立即发 JD，预估需新增 ${hire} 名 ${who}。`;
-}
-
-function round1(n: number): number {
-  return Math.round(n * 10) / 10;
-}
-
-function addWeeks(isoDate: string, weeks: number): string {
-  const d = new Date(isoDate);
-  d.setDate(d.getDate() + weeks * 7);
-  return d.toISOString().slice(0, 10);
-}
-
-// ===== 历史时序：把每周快照映射成 demand/capacity 折线点 =====
+// ============================================================
+// 历史时序：每周历史可接新患者容量 vs 实际新预约
+// ============================================================
 
 export interface HistoricalSeries {
-  mdInitial: WeekPoint[];
-  nonInitial: WeekPoint[];
+  weekly: WeekPoint[];
 }
 
 export function computeHistoricalSeries(
@@ -289,38 +203,30 @@ export function computeHistoricalSeries(
   noShowRate: number,
   c: Constants,
 ): HistoricalSeries {
-  // 假设：staff 在历史窗口内不变（v0 简化）。
-  const mdCapPerWeek = mdInitialCapacityMinPerWeek(staff.md, c);
-  const niCapPerWeek = nonInitialCapacityMinPerWeek(staff.md, staff.np, c);
-
-  const mdInitial: WeekPoint[] = history.weekly.map((w) => {
-    const showRate = 1 - noShowRate;
-    const demandSessions = w.initialBookings * showRate;
-    const capacitySessions = mdCapPerWeek / c.appointmentMinutes.initial;
-    const safeCapacitySessions = capacitySessions / (1 + c.buffer.md);
+  const weekly: WeekPoint[] = history.weekly.map((w) => {
+    // 假设 staff 在历史窗口内不变
+    const cap = computeNewPatientCapacity(
+      staff,
+      {
+        asOfDate: w.weekStart,
+        queueInitial: 0,
+        panelFullFlow: w.panelFullFlow,
+        panelTitration: w.panelTitration,
+      },
+      c,
+    );
+    const expected = w.initialBookings * (1 - noShowRate);
+    const safe = cap.total / (1 + c.buffer);
     return {
       weekStart: w.weekStart,
-      demand: round1(demandSessions),
-      capacity: round1(capacitySessions),
-      safeCapacity: round1(safeCapacitySessions),
+      newPatientCapacity: round1(cap.total),
+      expectedBookings: round1(expected),
+      safeCapacity: round1(safe),
     };
   });
+  return { weekly };
+}
 
-  const nonInitial: WeekPoint[] = history.weekly.map((w) => {
-    const avgMin = avgNonInitialMinutes(w.inFollowup, w.inMaintenance, c);
-    const demandMin =
-      (w.inFollowup / c.followup.weeksBetweenVisits) * c.appointmentMinutes.followup +
-      (w.inMaintenance / c.maintenance.weeksBetweenVisits) * c.appointmentMinutes.maintenance;
-    const demandSessions = demandMin / avgMin;
-    const capacitySessions = niCapPerWeek / avgMin;
-    const safeCapacitySessions = capacitySessions / (1 + c.buffer.np);
-    return {
-      weekStart: w.weekStart,
-      demand: round1(demandSessions),
-      capacity: round1(capacitySessions),
-      safeCapacity: round1(safeCapacitySessions),
-    };
-  });
-
-  return { mdInitial, nonInitial };
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
 }

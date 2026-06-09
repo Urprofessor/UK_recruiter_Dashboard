@@ -4,22 +4,22 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 interface Props {
   queueInitial: number;
-  inFollowup: number;
-  inMaintenance: number;
+  panelFullFlow: number;
+  panelTitration: number;
 }
 
 const COLORS = {
-  initial: "#f59e0b",     // amber
-  followup: "#3b82f6",    // blue
-  maintenance: "#10b981", // emerald
+  queue: "#f59e0b",        // amber
+  fullFlow: "#6366f1",     // indigo
+  titration: "#10b981",    // emerald
 };
 
-export function PatientDonut({ queueInitial, inFollowup, inMaintenance }: Props) {
-  const total = queueInitial + inFollowup + inMaintenance;
+export function PatientDonut({ queueInitial, panelFullFlow, panelTitration }: Props) {
+  const total = queueInitial + panelFullFlow + panelTitration;
   const data = [
-    { name: "等待首诊", value: queueInitial, color: COLORS.initial },
-    { name: "复诊中", value: inFollowup, color: COLORS.followup },
-    { name: "维持中", value: inMaintenance, color: COLORS.maintenance },
+    { name: "等待首诊", value: queueInitial, color: COLORS.queue },
+    { name: "全流程 MD panel", value: panelFullFlow, color: COLORS.fullFlow },
+    { name: "Titration Team panel", value: panelTitration, color: COLORS.titration },
   ];
 
   return (
@@ -49,12 +49,12 @@ export function PatientDonut({ queueInitial, inFollowup, inMaintenance }: Props)
                 borderRadius: 6,
                 border: "1px solid #e5e7eb",
               }}
-              formatter={(value: number) => `${value} 人`}
+              formatter={(value) => [`${value} 人`, ""]}
             />
           </PieChart>
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <div className="text-2xl font-semibold text-gray-900">{total}</div>
+          <div className="text-2xl font-semibold text-gray-900">{total.toLocaleString()}</div>
           <div className="text-[10px] text-gray-500">在册总数</div>
         </div>
       </div>
@@ -68,7 +68,7 @@ export function PatientDonut({ queueInitial, inFollowup, inMaintenance }: Props)
               />
               <span className="text-gray-600">{d.name}</span>
             </span>
-            <span className="font-medium tabular-nums text-gray-900">{d.value}</span>
+            <span className="font-medium tabular-nums text-gray-900">{d.value.toLocaleString()}</span>
           </li>
         ))}
       </ul>

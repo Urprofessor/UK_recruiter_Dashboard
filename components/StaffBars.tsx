@@ -12,17 +12,17 @@ import {
 } from "recharts";
 
 interface Props {
-  mdFullFlow: number;
-  mdInitialOnly: number;
-  np: number;
+  fullFlow: number;
+  pureDx: number;
+  titration: number;
 }
 
-export function StaffBars({ mdFullFlow, mdInitialOnly, np }: Props) {
-  // 与 PatientDonut 的 amber/blue/emerald 完全错开
+export function StaffBars({ fullFlow, pureDx, titration }: Props) {
+  // 与 PatientDonut 完全错开
   const data = [
-    { type: "MD-全流程", count: mdFullFlow, color: "#7c3aed" }, // violet
-    { type: "MD-仅初诊", count: mdInitialOnly, color: "#ec4899" }, // pink
-    { type: "NP", count: np, color: "#0d9488" }, // 深 teal（区别于 emerald）
+    { type: "全流程 MD", count: fullFlow, color: "#6366f1" },     // indigo (与 panel 全流程同色)
+    { type: "纯诊断 MD", count: pureDx, color: "#ec4899" },        // pink
+    { type: "Titration", count: titration, color: "#10b981" },     // emerald (与 panel titration 同色)
   ];
 
   return (
@@ -49,7 +49,7 @@ export function StaffBars({ mdFullFlow, mdInitialOnly, np }: Props) {
               borderRadius: 6,
               border: "1px solid #e5e7eb",
             }}
-            formatter={(value: number) => `${value} 人`}
+            formatter={(value) => [`${value} 人`, ""]}
             cursor={{ fill: "rgba(0,0,0,0.04)" }}
           />
           <Bar dataKey="count" radius={[4, 4, 0, 0]}>

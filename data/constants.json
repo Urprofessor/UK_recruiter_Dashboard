@@ -1,36 +1,23 @@
 {
   "appointmentMinutes": {
     "initial": 45,
-    "followup": 30,
-    "maintenance": 15
+    "drug": 30,
+    "fu": 15
   },
-  "buffer": {
-    "md": 0.20,
-    "np": 0.20
-  },
+  "fuRate": 0.5,
+  "panelLimitPerMD": 200,
+  "panelLimitWarnAt": 150,
+  "buffer": 0.20,
   "leadTimeWeeks": {
     "md": 12,
-    "np": 8
+    "titration": 8
   },
   "lookaheadWeeks": {
     "md": 12,
-    "np": 8
+    "titration": 8
   },
-  "followup": {
-    "weeksBetweenVisits": 2,
-    "weeksUntilStable": 12
-  },
-  "maintenance": {
-    "weeksBetweenVisits": 2.5
-  },
-  "fullFlowMdSplit": {
-    "initialPct": 0.5,
-    "nonInitialPct": 0.5
-  },
-  "titrationRatio": 0.60,
   "effectiveUtilization": 0.85,
   "typicalNewHire": {
-    "weeklyHours": 25,
-    "availability": 0.92
+    "weeklyHours": 25
   }
 }

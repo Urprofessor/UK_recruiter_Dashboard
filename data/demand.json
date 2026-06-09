@@ -1,7 +1,6 @@
 {
   "asOfDate": "2026-06-08",
   "noShowRate": 0.12,
-  "conversionToFollowup": 0.85,
   "newInitialBookings": [
     { "weekStart": "2026-06-08", "expected": 28 },
     { "weekStart": "2026-06-15", "expected": 32 },

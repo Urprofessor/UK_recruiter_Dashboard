@@ -1,20 +1,20 @@
 {
   "asOfDate": "2026-06-08",
   "md": [
-    { "id": "md-001", "name": "Dr. A", "subtype": "full_flow",    "weeklyHours": 32, "availability": 0.92 },
-    { "id": "md-002", "name": "Dr. B", "subtype": "full_flow",    "weeklyHours": 32, "availability": 0.92 },
-    { "id": "md-003", "name": "Dr. C", "subtype": "full_flow",    "weeklyHours": 24, "availability": 0.90 },
-    { "id": "md-004", "name": "Dr. D", "subtype": "initial_only", "weeklyHours": 32, "availability": 0.92 },
-    { "id": "md-005", "name": "Dr. E", "subtype": "initial_only", "weeklyHours": 32, "availability": 0.92 },
-    { "id": "md-006", "name": "Dr. F", "subtype": "initial_only", "weeklyHours": 24, "availability": 0.90 },
-    { "id": "md-007", "name": "Dr. G", "subtype": "initial_only", "weeklyHours": 20, "availability": 0.88 },
-    { "id": "md-008", "name": "Dr. H", "subtype": "initial_only", "weeklyHours": 16, "availability": 0.85 }
+    { "id": "md-001", "name": "Dr. A", "subtype": "full_flow",  "weeklyHours": 25 },
+    { "id": "md-002", "name": "Dr. B", "subtype": "full_flow",  "weeklyHours": 25 },
+    { "id": "md-003", "name": "Dr. C", "subtype": "full_flow",  "weeklyHours": 25 },
+    { "id": "md-004", "name": "Dr. D", "subtype": "pure_dx",    "weeklyHours": 25 },
+    { "id": "md-005", "name": "Dr. E", "subtype": "pure_dx",    "weeklyHours": 25 },
+    { "id": "md-006", "name": "Dr. F", "subtype": "pure_dx",    "weeklyHours": 25 },
+    { "id": "md-007", "name": "Dr. G", "subtype": "pure_dx",    "weeklyHours": 20 },
+    { "id": "md-008", "name": "Dr. H", "subtype": "pure_dx",    "weeklyHours": 20 }
   ],
-  "np": [
-    { "id": "np-001", "name": "NP X", "weeklyHours": 36, "availability": 0.92, "ipNp": true },
-    { "id": "np-002", "name": "NP Y", "weeklyHours": 36, "availability": 0.92, "ipNp": true },
-    { "id": "np-003", "name": "NP Z", "weeklyHours": 32, "availability": 0.90, "ipNp": true },
-    { "id": "np-004", "name": "NP W", "weeklyHours": 28, "availability": 0.92, "ipNp": true },
-    { "id": "np-005", "name": "NP V", "weeklyHours": 24, "availability": 0.88, "ipNp": true }
+  "titrationTeam": [
+    { "id": "np-001", "name": "NP X", "weeklyHours": 30, "ipNp": true },
+    { "id": "np-002", "name": "NP Y", "weeklyHours": 30, "ipNp": true },
+    { "id": "np-003", "name": "NP Z", "weeklyHours": 25, "ipNp": true },
+    { "id": "np-004", "name": "NP W", "weeklyHours": 25, "ipNp": true },
+    { "id": "np-005", "name": "NP V", "weeklyHours": 20, "ipNp": true }
   ]
 }
