@@ -1,7 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageShell } from "@/components/PageShell";
+
+const STORAGE_KEY = "balance-sheet-params-v1";
+const STORAGE_TS_KEY = "balance-sheet-params-v1:at";
 
 // ============================================================
 // 类型 & 默认值
@@ -296,6 +299,32 @@ function StatusPill({ status }: { status: Status }) {
 
 export default function BalanceSheetPage() {
   const [params, setParams] = useState<Params>(DEFAULTS);
+  const [lastSaved, setLastSaved] = useState<Params>(DEFAULTS);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
+
+  // 首次挂载时从 localStorage 读取上次保存的值
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        // 与 DEFAULTS 合并，防止以后加字段时旧数据缺字段
+        const merged: Params = { ...DEFAULTS, ...parsed };
+        // bookings 是 tuple，需要兜底
+        if (!Array.isArray(merged.bookings) || merged.bookings.length !== 4) {
+          merged.bookings = DEFAULTS.bookings;
+        }
+        setParams(merged);
+        setLastSaved(merged);
+      }
+      const atRaw = localStorage.getItem(STORAGE_TS_KEY);
+      if (atRaw) setSavedAt(Number(atRaw));
+    } catch {
+      // 静默：localStorage 不可用就用 DEFAULTS
+    }
+  }, []);
+
   const b = useMemo(() => computeBalance(params), [params]);
 
   function update<K extends keyof Params>(key: K, value: Params[K]) {
@@ -310,23 +339,83 @@ export default function BalanceSheetPage() {
     });
   }
 
-  const dirty = JSON.stringify(params) !== JSON.stringify(DEFAULTS);
+  function save() {
+    try {
+      const now = Date.now();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(params));
+      localStorage.setItem(STORAGE_TS_KEY, String(now));
+      setLastSaved(params);
+      setSavedAt(now);
+      setJustSaved(true);
+      window.setTimeout(() => setJustSaved(false), 1500);
+    } catch (e) {
+      console.error("保存失败：", e);
+      alert("保存失败，浏览器可能禁用了 localStorage。");
+    }
+  }
+
+  function resetToDefaults() {
+    setParams(DEFAULTS);
+    // 不动 localStorage——用户想"清空保存"需要点重置后再点保存
+  }
+
+  const hasUnsavedChanges = useMemo(
+    () => JSON.stringify(params) !== JSON.stringify(lastSaved),
+    [params, lastSaved],
+  );
+  const dirtyFromDefaults = useMemo(
+    () => JSON.stringify(params) !== JSON.stringify(DEFAULTS),
+    [params],
+  );
+
+  const savedAtText = savedAt
+    ? new Date(savedAt).toLocaleString("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        month: "numeric",
+        day: "numeric",
+      })
+    : null;
 
   return (
     <PageShell active="monitoring">
       <div className="grid gap-4 lg:grid-cols-5">
         {/* ===== 左：参数（25 个，分 6 块）===== */}
         <aside className="space-y-3 lg:col-span-2">
-          <div className="flex items-center justify-between px-1">
-            <h2 className="text-sm font-semibold text-gray-900">参数（可调）</h2>
-            <button
-              type="button"
-              onClick={() => setParams(DEFAULTS)}
-              disabled={!dirty}
-              className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40"
-            >
-              重置默认值
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">参数（可调）</h2>
+              <p className="mt-0.5 text-[10px] text-gray-400">
+                {hasUnsavedChanges
+                  ? "● 有未保存修改"
+                  : savedAtText
+                  ? `已保存 · ${savedAtText}`
+                  : "未保存（当前为默认值）"}
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={resetToDefaults}
+                disabled={!dirtyFromDefaults}
+                className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              >
+                重置默认值
+              </button>
+              <button
+                type="button"
+                onClick={save}
+                disabled={!hasUnsavedChanges}
+                className={
+                  "rounded-md px-3 py-1 text-[11px] font-medium transition-colors disabled:opacity-40 " +
+                  (justSaved
+                    ? "bg-emerald-600 text-white"
+                    : "bg-gray-900 text-white hover:bg-gray-800 disabled:bg-gray-300 disabled:text-gray-500")
+                }
+              >
+                {justSaved ? "✓ 已保存" : "保存"}
+              </button>
+            </div>
           </div>
 
           <Section title="A · 在岗人员">
@@ -490,13 +579,151 @@ export default function BalanceSheetPage() {
           />
 
           <p className="px-1 text-[11px] text-gray-400">
-            所有数字在左侧改任一参数会实时重算。重置回默认值用左上角按钮。
+            所有数字在左侧改任一参数会实时重算。"保存"后下次打开还在（仅本浏览器）。
             <br />
             诊次时长不同的项混在一起时，"诊次"列按各自时长换算；分钟列是真实分钟。
           </p>
+
+          {/* 公式说明 */}
+          <FormulaSection />
         </main>
       </div>
     </PageShell>
+  );
+}
+
+// ============================================================
+// 公式说明（可折叠）
+// ============================================================
+
+function FormulaSection() {
+  return (
+    <details className="group rounded-xl border border-[#f0eeea] bg-white">
+      <summary className="flex cursor-pointer list-none items-center justify-between p-5 hover:bg-gray-50">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900">公式说明</h3>
+          <p className="mt-0.5 text-[11px] text-gray-500">
+            所有数字怎么来的——可逐项核对到原始参数
+          </p>
+        </div>
+        <span className="text-gray-400 transition-transform group-open:rotate-90">›</span>
+      </summary>
+      <div className="space-y-5 border-t border-[#f0eeea] p-5 text-[12px]">
+
+        {/* 符号 */}
+        <FormulaBlock title="① 参数符号 → 含义">
+          <SymTable rows={[
+            ["n_MD仅初诊 / n_MD全流程 / n_NP", "三类人头数"],
+            ["h_MD / h_NP", "周有效工时（已扣非临床）"],
+            ["u", "利用率（默认 85%）"],
+            ["τ_init / τ_drug / τ_fu", "初诊 / 复诊 / 维持时长（min）"],
+            ["I_drug / I_fu", "复诊 / 维持的复诊间隔（周）"],
+            ["s_init", "全流程 MD 投在初诊的时间占比"],
+            ["P_复诊 / P_维持", "当前在册的两类病人人数"],
+            ["B_w", "第 w 周新预约首诊数"],
+            ["r_ns", "no-show 率"],
+            ["β_MD / β_NP", "MD / NP 冗余 %"],
+            ["W_MD / W_NP", "前瞻窗口（= 各自 lead time）"],
+          ]} />
+        </FormulaBlock>
+
+        {/* 单人 */}
+        <FormulaBlock title="② 单人每周可看病分钟数">
+          <Code>{`E_MD = h_MD × 60 × u
+E_NP = h_NP × 60 × u`}</Code>
+          <p className="mt-2 text-[11px] text-gray-500">
+            默认 25 × 60 × 0.85 = <strong>1275 min / 周 / 人</strong>
+          </p>
+        </FormulaBlock>
+
+        {/* 产能 */}
+        <FormulaBlock title="③ 产能（每周分钟数）">
+          <p className="text-[11px] text-gray-500">初诊容量（只能 MD 做）：</p>
+          <Code>{`C_init = n_MD仅初诊 × E_MD  +  n_MD全流程 × E_MD × s_init`}</Code>
+
+          <p className="mt-3 text-[11px] text-gray-500">非初诊容量（复诊 + 维持合并，MD 全流程 + 全部 NP）：</p>
+          <Code>{`C_ni  = n_MD全流程 × E_MD × (1 − s_init)  +  n_NP × E_NP`}</Code>
+        </FormulaBlock>
+
+        {/* 需求 */}
+        <FormulaBlock title="④ 需求（每周分钟数）">
+          <p className="text-[11px] text-gray-500">初诊需求（来自新预约）：</p>
+          <Code>{`D_init(w) = B_w × (1 − r_ns) × τ_init`}</Code>
+          <p className="mt-1 text-[11px] text-gray-500">
+            前瞻窗口内累计：<code>D_init_total = Σ_{`{w=1..W_MD}`} D_init(w)</code><br/>
+            超过 4 周的部分用已知 4 周的平均外推。
+          </p>
+
+          <p className="mt-3 text-[11px] text-gray-500">非初诊需求（稳态假设：池子在窗口内不变）：</p>
+          <Code>{`D_ni_per_week = (P_复诊 / I_drug) × τ_drug
+              + (P_维持 / I_fu) × τ_fu`}</Code>
+          <p className="mt-1 text-[11px] text-gray-500">
+            <code>P / I</code> 是把"池子总人数"换算成"每周诊次"——例：280 人每 2 周看 1 次，则每周来 140 个。<br/>
+            前瞻窗口内累计：<code>D_ni_total = D_ni_per_week × W_NP</code>
+          </p>
+        </FormulaBlock>
+
+        {/* Coverage */}
+        <FormulaBlock title="⑤ Coverage（覆盖率）">
+          <Code>{`Coverage_MD = (C_init × W_MD) / D_init_total
+Coverage_NI = (C_ni  × W_NP) / D_ni_total`}</Code>
+          <p className="mt-2 text-[11px] text-gray-500">
+            阈值：≥ <strong>1 + β</strong> 充裕 ｜ ≥ 1 紧张 ｜ &lt; 1 不够
+          </p>
+        </FormulaBlock>
+
+        {/* Gap */}
+        <FormulaBlock title="⑥ 缺口（Gap）">
+          <Code>{`Gap_MD_min = D_init_total × (1 + β_MD) − C_init × W_MD
+Gap_NI_min = D_ni_total  × (1 + β_NP) − C_ni  × W_NP`}</Code>
+          <p className="mt-2 text-[11px] text-gray-500">
+            正数 = 不够；负数 = 余量。Gap Hours = Gap_min ÷ 60。
+          </p>
+        </FormulaBlock>
+
+        {/* Hire */}
+        <FormulaBlock title="⑦ 建议招聘人数">
+          <Code>{`E_new = 25 × 60 × u                  （典型新员工，25 h/周）
+hires = ⌈ Gap_min / (E_new × W) ⌉`}</Code>
+          <p className="mt-2 text-[11px] text-gray-500">
+            分别按 MD / NP 算各自的 hires。Gap ≤ 0 时为 0。
+          </p>
+        </FormulaBlock>
+
+      </div>
+    </details>
+  );
+}
+
+function FormulaBlock({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h4 className="mb-1.5 text-[12px] font-medium text-gray-800">{title}</h4>
+      {children}
+    </div>
+  );
+}
+
+function Code({ children }: { children: React.ReactNode }) {
+  return (
+    <pre className="mt-1 overflow-x-auto rounded-md bg-gray-50 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-gray-800">
+      {children}
+    </pre>
+  );
+}
+
+function SymTable({ rows }: { rows: [string, string][] }) {
+  return (
+    <table className="w-full text-[11.5px]">
+      <tbody className="divide-y divide-[#f5f3ef]">
+        {rows.map(([sym, meaning]) => (
+          <tr key={sym}>
+            <td className="py-1 pr-3 align-top font-mono text-gray-800">{sym}</td>
+            <td className="py-1 text-gray-600">{meaning}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
