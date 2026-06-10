@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageShell } from "@/components/PageShell";
 
-const STORAGE_KEY = "balance-sheet-params-v2";
-const STORAGE_TS_KEY = "balance-sheet-params-v2:at";
+const STORAGE_KEY = "balance-sheet-params-v3";
+const STORAGE_TS_KEY = "balance-sheet-params-v3:at";
 
 // ============================================================
 // 参数 schema（22 项全部可调）
@@ -15,8 +15,9 @@ interface Params {
   nFullFlowMD: number;
   nPureDxMD: number;
   nTitration: number;
-  hMD: number;
-  hTitration: number;
+  hFullFlow: number;   // 全流程 MD 周工时/人
+  hPureDx: number;     // 纯诊断 MD 周工时/人
+  hTitration: number;  // NP / Titration Team 周工时/人
   // B · 当前在册患者
   queueInitial: number;
   panelFullFlow: number;
@@ -43,7 +44,8 @@ const DEFAULTS: Params = {
   nFullFlowMD: 3,
   nPureDxMD: 5,
   nTitration: 5,
-  hMD: 25,
+  hFullFlow: 25,
+  hPureDx: 25,
   hTitration: 25,
   queueInitial: 24,
   panelFullFlow: 150,
@@ -116,13 +118,13 @@ function computeBalance(p: Params): Balance {
   const onboardA = tauInit + tauDrug;
 
   // === Bucket A ===
-  const totalHoursA = p.nFullFlowMD * p.hMD * u;
+  const totalHoursA = p.nFullFlowMD * p.hFullFlow * u;
   const existingA = p.panelFullFlow * p.fuRate * tauFu;
   const freeA = totalHoursA - existingA;
   const newCapA = Math.max(0, freeA) / onboardA;
 
   // === Bucket B ===
-  const pureDxHours = p.nPureDxMD * p.hMD * u;
+  const pureDxHours = p.nPureDxMD * p.hPureDx * u;
   const dxCap = pureDxHours / tauInit;
 
   const titHours = p.nTitration * p.hTitration * u;
@@ -442,10 +444,14 @@ export default function BalanceSheetPage() {
             <div className="grid grid-cols-3 gap-3">
               <NumberInput label="全流程 MD" value={params.nFullFlowMD} onChange={(v) => update("nFullFlowMD", v)} unit="人" min={0} />
               <NumberInput label="纯诊断 MD" value={params.nPureDxMD} onChange={(v) => update("nPureDxMD", v)} unit="人" min={0} />
-              <NumberInput label="Titration" value={params.nTitration} onChange={(v) => update("nTitration", v)} unit="人" min={0} />
-              <NumberInput label="MD 周工时" value={params.hMD} onChange={(v) => update("hMD", v)} unit="h" step={0.5} min={0} />
-              <NumberInput label="Tit 周工时" value={params.hTitration} onChange={(v) => update("hTitration", v)} unit="h" step={0.5} min={0} />
+              <NumberInput label="NP" value={params.nTitration} onChange={(v) => update("nTitration", v)} unit="人" min={0} />
+              <NumberInput label="全流程 MD 工时/人" value={params.hFullFlow} onChange={(v) => update("hFullFlow", v)} unit="h" step={0.5} min={0} />
+              <NumberInput label="纯诊断 MD 工时/人" value={params.hPureDx} onChange={(v) => update("hPureDx", v)} unit="h" step={0.5} min={0} />
+              <NumberInput label="NP 工时/人" value={params.hTitration} onChange={(v) => update("hTitration", v)} unit="h" step={0.5} min={0} />
             </div>
+            <p className="mt-2 text-[10px] text-gray-400">
+              每人每周实际看病小时数（已含非临床扣减）。利用率会在下方再叠加一次折扣。
+            </p>
           </Section>
 
           <Section title="B · 当前在册患者">
@@ -695,28 +701,30 @@ function FormulaSection() {
         <span className="text-gray-400 transition-transform group-open:rotate-90">›</span>
       </summary>
       <div className="space-y-4 border-t border-[#f0eeea] p-5 text-[12px]">
-        <FB title="① 单人每周可看病小时数">
-          <Code>{`H = h_周工时 × u           （默认 25 × 0.85 = 21.25 h/周）`}</Code>
+        <FB title="① 单人每周可看病小时数（按角色分别配置）">
+          <Code>{`H_full = h_full × u        （全流程 MD 工时/人 × 利用率）
+H_pure = h_pure × u        （纯诊断 MD 工时/人 × 利用率）
+H_NP   = h_NP   × u        （NP 工时/人 × 利用率）`}</Code>
         </FB>
         <FB title="② Bucket A · 全流程 MD">
           <Code>{`Step 1  现有 panel 维持小时数
         D_full_existing = Pnl_full × fu_rate × τ_fu
 
 Step 2  剩余可分配小时数
-        Free_full = (n_full × H_MD) − D_full_existing
+        Free_full = (n_full × H_full) − D_full_existing
 
 Step 3  可接新患者数（每个新患者 = 0.75 + 0.5 = 1.25 h）
         NewCap_full = max(0, Free_full) / 1.25`}</Code>
         </FB>
-        <FB title="③ Bucket B · 纯诊断 MD + Titration Team">
-          <Code>{`Step 1  Titration 维持现有 panel
+        <FB title="③ Bucket B · 纯诊断 MD + NP（Titration Team）">
+          <Code>{`Step 1  NP 维持现有 panel
         D_tit_existing = Pnl_tit × fu_rate × τ_fu
 
 Step 2  纯诊断 MD 可做诊断数
-        DxCap = (n_pure × H_MD) / τ_init        （τ_init = 0.75 h）
+        DxCap = (n_pure × H_pure) / τ_init      （τ_init = 0.75 h）
 
-Step 3  Titration 可做 drug init 数
-        Free_tit = max(0, (n_tit × H_Tit) − D_tit_existing)
+Step 3  NP 可做 drug init 数
+        Free_tit = max(0, (n_NP × H_NP) − D_tit_existing)
         TitCap   = Free_tit / τ_drug             （τ_drug = 0.5 h）
 
 Step 4  桶上限（任一不够都做不成）

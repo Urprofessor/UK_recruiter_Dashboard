@@ -67,9 +67,13 @@ export default function RulesPage() {
 
         {/* §4 公式 */}
         <Section number="§4" title="核心公式" hint="平衡表上的数字怎么算出来的">
-          <Sub title="① 单人每周可看病小时数">
-            <Code>{`H_MD       = h_MD × u            （默认 25 × 0.85 = 21.25 h/周）
-H_NP/Tit   = h_NP × u            （同上）`}</Code>
+          <Sub title="① 单人每周可看病小时数（每个角色单独配）">
+            <Code>{`H_full = h_full × u        （全流程 MD 工时/人 × 利用率）
+H_pure = h_pure × u        （纯诊断 MD 工时/人 × 利用率）
+H_NP   = h_NP   × u        （NP 工时/人 × 利用率）`}</Code>
+            <p className="mt-1 text-[11px] text-gray-500">
+              三类角色的实际工时可能不一样（比如 NP 全职 25h、纯诊断 MD 兼职 15h），所以分开配置。利用率默认 85%（医生不按 100% 排满）。
+            </p>
           </Sub>
 
           <Sub title="② 全流程 MD 桶">
@@ -77,21 +81,21 @@ H_NP/Tit   = h_NP × u            （同上）`}</Code>
         D_full_existing = Pnl_full × fu_rate × τ_fu
 
 Step 2  剩余可分配小时数
-        Free_full = (n_full × H_MD) − D_full_existing
+        Free_full = (n_full × H_full) − D_full_existing
 
 Step 3  可接新患者数（每个新患者 = 初诊 45min + drug init 30min = 1.25h）
         NewCap_full = max(0, Free_full) / 1.25`}</Code>
           </Sub>
 
-          <Sub title="③ 纯诊断 MD + Titration Team 桶">
-            <Code>{`Step 1  Titration Team 维持现有 panel 所需小时数
+          <Sub title="③ 纯诊断 MD + NP（Titration Team）桶">
+            <Code>{`Step 1  NP 维持现有 panel 所需小时数
         D_tit_existing = Pnl_tit × fu_rate × τ_fu
 
 Step 2  纯诊断 MD 可做的初诊数
-        DxCap = (n_pure × H_MD) / 0.75       （τ_init = 0.75h）
+        DxCap = (n_pure × H_pure) / 0.75     （τ_init = 0.75h）
 
-Step 3  Titration Team 可做的 drug init 数
-        Free_tit = max(0, (n_tit × H_NP) − D_tit_existing)
+Step 3  NP 可做的 drug init 数
+        Free_tit = max(0, (n_NP × H_NP) − D_tit_existing)
         TitCap   = Free_tit / 0.5            （τ_drug = 0.5h）
 
 Step 4  这一桶的新患者上限 = 两端最小（任一不够都做不成）
