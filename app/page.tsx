@@ -2,6 +2,7 @@ import { PageShell } from "@/components/PageShell";
 import { GapChartCard } from "@/components/GapChartCard";
 import { PatientDonut } from "@/components/PatientDonut";
 import { StaffBars } from "@/components/StaffBars";
+import { UtilizationChart } from "@/components/UtilizationChart";
 import { loadAllData } from "@/lib/dataSource";
 import { computeDecision, computeHistoricalSeries } from "@/lib/model";
 import type { Status } from "@/lib/types";
@@ -153,6 +154,8 @@ export default async function Page() {
             hint={`${data.history.weekly[0]?.weekStart} → ${data.history.weekly.at(-1)?.weekStart}　蓝 = 容量（基于历史 panel），红 = 实际新预约`}
             weekly={series.weekly}
           />
+
+          <UtilizationChart weekly={data.history.weekly} />
 
           {/* Bucket 分解 */}
           <Card title="本周容量来源分解" hint="按 PDF 4 步逻辑：全流程桶 + 纯诊断/Titration 桶">

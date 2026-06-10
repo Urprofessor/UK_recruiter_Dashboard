@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageShell } from "@/components/PageShell";
 
-const STORAGE_KEY = "balance-sheet-params-v3";
-const STORAGE_TS_KEY = "balance-sheet-params-v3:at";
+const STORAGE_KEY = "balance-sheet-params-v4";
+const STORAGE_TS_KEY = "balance-sheet-params-v4:at";
 
 // ============================================================
 // 参数 schema（22 项全部可调）
@@ -47,9 +47,9 @@ const DEFAULTS: Params = {
   hFullFlow: 25,
   hPureDx: 25,
   hTitration: 25,
-  queueInitial: 24,
-  panelFullFlow: 150,
-  panelTitration: 2450,
+  queueInitial: 11,
+  panelFullFlow: 500,
+  panelTitration: 700,
   bookings: [28, 32, 35, 38],
   tauInit: 45,
   tauDrug: 30,

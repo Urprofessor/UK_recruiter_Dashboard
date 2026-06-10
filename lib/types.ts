@@ -87,6 +87,10 @@ export interface WeeklyHistoryPoint {
   initialBookings: number;
   panelFullFlow: number;
   panelTitration: number;
+  /** 当周实际预约率 = 被订小时数 / 该角色供给小时数 */
+  utilFullFlow?: number;
+  utilPureDx?: number;
+  utilNP?: number;
 }
 
 export interface HistoryData {

@@ -1,6 +1,6 @@
 {
   "asOfDate": "2026-06-08",
-  "queueInitial": 24,
-  "panelFullFlow": 150,
-  "panelTitration": 2450
+  "queueInitial": 11,
+  "panelFullFlow": 500,
+  "panelTitration": 700
 }
