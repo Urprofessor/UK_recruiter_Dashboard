@@ -226,6 +226,8 @@ const fmt1 = (n: number) =>
   Number.isFinite(n) ? n.toFixed(1) : "—";
 const fmt0 = (n: number) =>
   Number.isFinite(n) ? Math.round(n).toLocaleString() : "—";
+const round1 = (n: number) =>
+  Number.isFinite(n) ? Math.round(n * 10) / 10 : 0;
 
 // ============================================================
 // UI 子组件
@@ -442,15 +444,51 @@ export default function BalanceSheetPage() {
 
           <Section title="A · 在岗人员">
             <div className="grid grid-cols-3 gap-3">
+              {/* Row 1: 人数 */}
               <NumberInput label="全流程 MD" value={params.nFullFlowMD} onChange={(v) => update("nFullFlowMD", v)} unit="人" min={0} />
               <NumberInput label="纯诊断 MD" value={params.nPureDxMD} onChange={(v) => update("nPureDxMD", v)} unit="人" min={0} />
               <NumberInput label="NP" value={params.nTitration} onChange={(v) => update("nTitration", v)} unit="人" min={0} />
-              <NumberInput label="全流程 MD 工时/人" value={params.hFullFlow} onChange={(v) => update("hFullFlow", v)} unit="h" step={0.5} min={0} />
-              <NumberInput label="纯诊断 MD 工时/人" value={params.hPureDx} onChange={(v) => update("hPureDx", v)} unit="h" step={0.5} min={0} />
-              <NumberInput label="NP 工时/人" value={params.hTitration} onChange={(v) => update("hTitration", v)} unit="h" step={0.5} min={0} />
+
+              {/* Row 2: 工时/人 */}
+              <NumberInput label="全流程 MD 工时/人" value={round1(params.hFullFlow)} onChange={(v) => update("hFullFlow", v)} unit="h" step={0.5} min={0} />
+              <NumberInput label="纯诊断 MD 工时/人" value={round1(params.hPureDx)} onChange={(v) => update("hPureDx", v)} unit="h" step={0.5} min={0} />
+              <NumberInput label="NP 工时/人" value={round1(params.hTitration)} onChange={(v) => update("hTitration", v)} unit="h" step={0.5} min={0} />
+
+              {/* Row 3: 团队总工时（与工时/人双向绑定） */}
+              <NumberInput
+                label="全流程 总工时/周"
+                value={round1(params.nFullFlowMD * params.hFullFlow)}
+                onChange={(v) => {
+                  if (params.nFullFlowMD > 0) update("hFullFlow", v / params.nFullFlowMD);
+                }}
+                unit="h"
+                step={5}
+                min={0}
+              />
+              <NumberInput
+                label="纯诊断 总工时/周"
+                value={round1(params.nPureDxMD * params.hPureDx)}
+                onChange={(v) => {
+                  if (params.nPureDxMD > 0) update("hPureDx", v / params.nPureDxMD);
+                }}
+                unit="h"
+                step={5}
+                min={0}
+              />
+              <NumberInput
+                label="NP 总工时/周"
+                value={round1(params.nTitration * params.hTitration)}
+                onChange={(v) => {
+                  if (params.nTitration > 0) update("hTitration", v / params.nTitration);
+                }}
+                unit="h"
+                step={5}
+                min={0}
+              />
             </div>
             <p className="mt-2 text-[10px] text-gray-400">
-              每人每周实际看病小时数（已含非临床扣减）。利用率会在下方再叠加一次折扣。
+              三种输入方式可互换：改"工时/人"→ 总工时跟着变；改"总工时"→ 工时/人 = 总工时 ÷ 人数。
+              改"人数"时假设每人工时不变。
             </p>
           </Section>
 
